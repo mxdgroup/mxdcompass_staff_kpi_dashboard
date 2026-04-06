@@ -83,7 +83,7 @@ export async function fetchWeeklyMemberData(
   for (const folderId of folderIds) {
     // ---- Tasks ----
     const tasks = await client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
-      updatedDate: { start: dateRange.start, end: dateRange.end },
+      updatedDate: JSON.stringify({ start: `${dateRange.start}T00:00:00Z`, end: `${dateRange.end}T23:59:59Z` }),
       fields: JSON.stringify([
         "description",
         "customFields",
@@ -139,7 +139,7 @@ export async function fetchWeeklyMemberData(
   const timelogs = await client.get<WrikeTimelog>(
     `/contacts/${contactId}/timelogs`,
     {
-      trackedDate: { start: dateRange.start, end: dateRange.end },
+      trackedDate: JSON.stringify({ start: `${dateRange.start}T00:00:00Z`, end: `${dateRange.end}T23:59:59Z` }),
     },
   );
 
