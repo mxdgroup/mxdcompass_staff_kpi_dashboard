@@ -137,10 +137,9 @@ export class WrikeClient {
     let nextPageToken: string | undefined;
 
     do {
-      const response = await this.request<T>(path, {
-        ...params,
-        ...(nextPageToken ? { nextPageToken } : {}),
-      });
+      // Wrike pagination: when using nextPageToken, send ONLY the token, not the original params
+      const requestParams = nextPageToken ? { nextPageToken } : params;
+      const response = await this.request<T>(path, requestParams);
 
       if (Array.isArray(response.data)) {
         all.push(...response.data);
