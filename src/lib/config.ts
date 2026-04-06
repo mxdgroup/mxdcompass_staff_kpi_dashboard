@@ -13,59 +13,68 @@ export interface DashboardConfig {
   wrikeFolderIds: string[];
   githubOrg: string;
   githubRepos: string[];
-  approvalWorkflowOwner: string; // Wrike contact ID of person whose approval cycle time is tracked
-  returnForReviewStatusName: string; // Name to match in Wrike workflows (e.g., "Return for Review")
-  clientReviewStatusName: string; // Name of the Client Review status
-  completedStatusNames: string[]; // Names that indicate completion (e.g., ["Completed", "Approved"])
+  approvalWorkflowOwner: string;
+  returnForReviewStatusName: string;
+  clientReviewStatusName: string;
+  completedStatusNames: string[];
 }
 
-// --- CONFIGURE YOUR TEAM HERE ---
-// Wrike contact IDs: call GET /contacts with your token to find them
-// GitHub usernames: null for non-engineers
 export const config: DashboardConfig = {
   team: [
     {
       name: "Matthew",
       role: "developer",
-      wrikeContactId: "", // TODO: populate from GET /contacts
+      wrikeContactId: "KUAWRNQD",
       githubUsername: "matthewsliedrecht",
       expectedWeeklyHours: 40,
     },
     {
       name: "Ivan",
       role: "developer",
-      wrikeContactId: "", // TODO: populate from GET /contacts
-      githubUsername: "", // TODO: set GitHub username
+      wrikeContactId: "KUAXD6OG",
+      githubUsername: null, // TODO: set GitHub username when known
       expectedWeeklyHours: 40,
     },
     {
       name: "Andrea",
       role: "account-manager",
-      wrikeContactId: "", // TODO: populate from GET /contacts
+      wrikeContactId: "KUAXD23C",
       githubUsername: null,
       expectedWeeklyHours: 40,
     },
-    // Add more team members as needed
+    {
+      name: "Christian",
+      role: "developer",
+      wrikeContactId: "KUAW7PGR",
+      githubUsername: null, // TODO: set GitHub username when known
+      expectedWeeklyHours: 40,
+    },
   ],
 
-  // Wrike folder IDs to query for tasks (across all clients)
-  // Find via Wrike UI or GET /folders
+  // Active client folders in Wrike
   wrikeFolderIds: [
-    // TODO: populate folder IDs
+    "MQAAAAEAs-EQ",  // Client Work
+    "MQAAAAEAs_35",  // Clinic 27
+    "MQAAAAEAs_3-",  // Suzanne Code
+    "MQAAAAEERizq",  // LifeCycle Offers
+    "MQAAAAEAs-ES",  // Hacker Kitchens
   ],
 
   githubOrg: "mxdgroup",
   githubRepos: [
     "mxd-compass",
-    // TODO: add other repos to track
+    "mxdcompass_staff_kpi_dashboard",
   ],
 
-  // Initially Matt — change this contact ID when role changes
-  approvalWorkflowOwner: "", // TODO: set to Matt's Wrike contact ID
+  // Matthew handles client approvals
+  approvalWorkflowOwner: "KUAWRNQD",
 
+  // Wrike workflow status names to match
+  // Current workflow: New → In Progress → Completed (simple)
+  // Adjust these if you add custom statuses like "Return for Review" or "Client Review"
   returnForReviewStatusName: "Return for Review",
   clientReviewStatusName: "Client Review",
-  completedStatusNames: ["Completed", "Approved", "Complete"],
+  completedStatusNames: ["Completed"],
 };
 
 // Derived helpers
