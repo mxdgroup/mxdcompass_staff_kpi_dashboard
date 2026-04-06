@@ -6,6 +6,10 @@ interface WeekSelectorProps {
 }
 
 export function WeekSelector({ currentWeek, onWeekChange }: WeekSelectorProps) {
+  if (!currentWeek || !currentWeek.includes("-W")) {
+    return <span className="text-sm text-gray-400">Loading...</span>;
+  }
+
   const [yearStr, weekPart] = currentWeek.split("-W");
   const year = parseInt(yearStr, 10);
   const weekNum = parseInt(weekPart, 10);

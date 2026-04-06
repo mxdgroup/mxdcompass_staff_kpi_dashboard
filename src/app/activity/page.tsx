@@ -6,7 +6,7 @@ import { WeekSelector } from "@/components/WeekSelector";
 
 export default function ActivityPage() {
   const [data, setData] = useState<any>(null);
-  const [week, setWeek] = useState("current");
+  const [week, setWeek] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -18,7 +18,7 @@ export default function ActivityPage() {
     setLoading(true);
     setError("");
     try {
-      const param = w === "current" ? "" : `?week=${w}`;
+      const param = !w ? "" : `?week=${w}`;
       const res = await fetch(`/api/activity${param}`);
       if (res.status === 401) {
         window.location.href = "/login";
