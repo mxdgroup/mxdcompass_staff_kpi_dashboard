@@ -47,6 +47,21 @@ export async function GET() {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: "Wrike API failed", details: message }, { status: 500 });
+    const tokenPreview = (
+      process.env.WRIKE_PERMANENT_ACCESS_TOKEN ??
+      process.env.WRIKE_TOKEN ??
+      process.env.wrike_permanent_access_token ??
+      "NOT_SET"
+    ).slice(0, 20) + "...";
+    return NextResponse.json({
+      error: "Wrike API failed",
+      details: message,
+      debug: {
+        tokenEnvVar: process.env.WRIKE_PERMANENT_ACCESS_TOKEN ? "WRIKE_PERMANENT_ACCESS_TOKEN" : process.env.WRIKE_TOKEN ? "WRIKE_TOKEN" : "NOT_FOUND",
+        tokenPreview,
+        hasClientId: !!process.env.WRIKE_CLIENT_ID,
+        hasClientSecret: !!process.env.WRIKE_CLIENT_SECRET,
+      }
+    }, { status: 500 });
   }
 }

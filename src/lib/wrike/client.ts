@@ -25,10 +25,14 @@ export class WrikeClient {
 
   constructor(token?: string) {
     const resolved =
-      token ?? process.env.WRIKE_PERMANENT_ACCESS_TOKEN ?? undefined;
+      token ??
+      process.env.WRIKE_PERMANENT_ACCESS_TOKEN ??
+      process.env.WRIKE_TOKEN ??
+      process.env.wrike_permanent_access_token ??
+      undefined;
     if (!resolved) {
       throw new Error(
-        "Missing Wrike token. Set WRIKE_PERMANENT_ACCESS_TOKEN or pass a token.",
+        "Missing Wrike token. Set WRIKE_PERMANENT_ACCESS_TOKEN, WRIKE_TOKEN, or wrike_permanent_access_token.",
       );
     }
     this.token = resolved;
