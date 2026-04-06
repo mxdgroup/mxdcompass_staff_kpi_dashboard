@@ -71,67 +71,40 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
 // ---------------------------------------------------------------------------
 
 export async function fetchWeeklyMemberData(
-  folderIds: string[],
+  _folderIds: string[],
   contactId: string,
   dateRange: { start: string; end: string },
 ): Promise<WeeklyMemberData> {
   const client = getWrikeClient();
-
-  const allTasks: WrikeTask[] = [];
   const commentsByTask = new Map<string, WrikeComment[]>();
 
-  for (const folderId of folderIds) {
-    // ---- Tasks ----
-    const tasks = await client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
-      updatedDate: JSON.stringify({ start: `${dateRange.start}T00:00:00Z`, end: `${dateRange.end}T23:59:59Z` }),
-      fields: JSON.stringify([
-        "description",
-        "customFields",
-        "responsibleIds",
-        "subTaskIds",
-        "briefDescription",
-      ]),
-      descendants: true,
-    });
+  // ---- Tasks (account-level with responsibles filter) ----
+  // This avoids folder ID issues and gets all tasks assigned to the member
+  const tasks = await client.get<WrikeTask>("/tasks", {
+    responsibles: JSON.stringify([contactId]),
+    updatedDate: JSON.stringify({ start: `${dateRange.start}T00:00:00Z`, end: `${dateRange.end}T23:59:59Z` }),
+    fields: JSON.stringify([
+      "description",
+      "customFields",
+      "responsibleIds",
+      "subTaskIds",
+      "briefDescription",
+    ]),
+  });
 
-    // Filter to tasks this member is responsible for
-    const memberTasks = tasks.filter((t) =>
-      t.responsibleIds?.includes(contactId),
-    );
-    allTasks.push(...memberTasks);
-
-    // ---- Comments (folder-level) ----
-    const folderComments = await client.get<WrikeComment>(
-      `/folders/${folderId}/comments`,
-    );
-
-    // Build a set of member task IDs for quick lookup
-    const memberTaskIds = new Set(memberTasks.map((t) => t.id));
-
-    // Map comments that have a taskId directly
-    let mappedTaskIds = new Set<string>();
-    for (const comment of folderComments) {
-      if (comment.taskId && memberTaskIds.has(comment.taskId)) {
-        const existing = commentsByTask.get(comment.taskId) ?? [];
-        existing.push(comment);
-        commentsByTask.set(comment.taskId, existing);
-        mappedTaskIds.add(comment.taskId);
-      }
-    }
-
-    // Fallback: for member tasks that had no folder-level comments mapped,
-    // fetch per-task comments (the folder endpoint may omit taskId in some cases)
-    const unmappedTaskIds = memberTasks
-      .filter((t) => !mappedTaskIds.has(t.id))
-      .map((t) => t.id);
-
-    for (const taskId of unmappedTaskIds) {
+  // ---- Comments (per-task, since account-level has no folder to scope) ----
+  // Limit to first 20 tasks to avoid excessive API calls
+  const tasksToFetchComments = tasks.slice(0, 20);
+  for (const task of tasksToFetchComments) {
+    try {
       const taskComments = await client.get<WrikeComment>(
-        `/tasks/${taskId}/comments`,
+        `/tasks/${task.id}/comments`,
       );
       if (taskComments.length > 0) {
-        commentsByTask.set(taskId, taskComments);
+        commentsByTask.set(task.id, taskComments);
       }
+    } catch {
+      // Skip comment fetch failures silently
     }
   }
 
@@ -145,5 +118,5 @@ export async function fetchWeeklyMemberData(
 
   const totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
 
-  return { tasks: allTasks, comments: commentsByTask, timelogs, totalHours };
+  return { tasks, comments: commentsByTask, timelogs, totalHours };
 }
