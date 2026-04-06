@@ -1,7 +1,5 @@
-import { kv } from "@vercel/kv";
+import { getRedis } from "../redis";
 import { redisKeyForWeek, type TransitionEntry } from "./webhook";
-
-const redis = kv;
 
 // ---------- Helpers ----------
 
@@ -51,12 +49,11 @@ export async function getTransitionsInRange(
   const keys = weekKeysBetween(startTimestamp, endTimestamp);
   const results: TransitionEntry[] = [];
 
+  const redis = getRedis();
   for (const key of keys) {
-    const members = (await redis.zrange(key, startTimestamp, endTimestamp, {
-      byScore: true,
-    })) as string[];
+    const members = await redis.zrangebyscore(key, startTimestamp, endTimestamp);
     for (const raw of members) {
-      const entry = parseMember(typeof raw === "string" ? raw : JSON.stringify(raw));
+      const entry = parseMember(raw);
       results.push({
         taskId: entry.taskId,
         fromStatusId: entry.fromStatusId,
