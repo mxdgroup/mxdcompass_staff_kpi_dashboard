@@ -112,7 +112,7 @@ export async function fetchWeeklyMemberData(
   const timelogs = await client.get<WrikeTimelog>(
     `/contacts/${contactId}/timelogs`,
     {
-      trackedDate: JSON.stringify({ start: `${dateRange.start}T00:00:00Z`, end: `${dateRange.end}T23:59:59Z` }),
+      trackedDate: JSON.stringify({ start: dateRange.start, end: dateRange.end }),
     },
   );
 
