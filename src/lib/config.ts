@@ -51,13 +51,9 @@ export const config: DashboardConfig = {
     },
   ],
 
-  // Active client folders in Wrike
+  // Use the top-level "Client Work" space with descendants=true to get all client tasks
   wrikeFolderIds: [
-    "MQAAAAEAs-EQ",  // Client Work
-    "MQAAAAEAs_35",  // Clinic 27
-    "MQAAAAEAs_3-",  // Suzanne Code
-    "MQAAAAEERizq",  // LifeCycle Offers
-    "MQAAAAEAs-ES",  // Hacker Kitchens
+    "MQAAAAEAs-EQ",  // Client Work (root space — includes all client subfolders)
   ],
 
   githubOrg: "mxdgroup",
