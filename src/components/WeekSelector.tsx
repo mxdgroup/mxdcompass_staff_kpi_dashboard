@@ -29,14 +29,14 @@ export function WeekSelector({ currentWeek, onWeekChange }: WeekSelectorProps) {
         onClick={() => navigate(-1)}
         className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
       >
-        \u2190 Prev
+        {"← Prev"}
       </button>
       <span className="text-sm font-medium text-gray-700">{currentWeek}</span>
       <button
         onClick={() => navigate(1)}
         className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
       >
-        Next \u2192
+        {"Next →"}
       </button>
     </div>
   );

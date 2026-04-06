@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { getWrikeClient } from "@/lib/wrike/client";
 import type { WrikeTask } from "@/lib/wrike/types";
 import { config } from "@/lib/config";
-import { getWeekRange, getWeekDays, getCurrentWeek, getISOWeek } from "@/lib/week";
+import { getWeekRange, getWeekDays, getCurrentWeek, getLastCompletedWeek, getISOWeek } from "@/lib/week";
 
 const STATUS_MAP: Record<string, string> = {
   IEAGV532JMGNL7LG: "New",
@@ -55,6 +55,8 @@ interface PersonActivity {
   };
 }
 
+export const maxDuration = 120;
+
 export async function GET(request: Request) {
   const authed = await isAuthenticated();
   if (!authed) {
@@ -62,7 +64,8 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const weekParam = searchParams.get("week") || getCurrentWeek();
+  // Default to last week on Monday mornings (the review meeting use case)
+  const weekParam = searchParams.get("week") || getLastCompletedWeek();
   const contactId = searchParams.get("contactId");
 
   const range = getWeekRange(weekParam);

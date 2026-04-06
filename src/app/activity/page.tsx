@@ -8,6 +8,7 @@ export default function ActivityPage() {
   const [data, setData] = useState<any>(null);
   const [week, setWeek] = useState("current");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetchActivity(week);
@@ -15,16 +16,24 @@ export default function ActivityPage() {
 
   async function fetchActivity(w: string) {
     setLoading(true);
-    const param = w === "current" ? "" : `?week=${w}`;
-    const res = await fetch(`/api/activity${param}`);
-    if (res.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
-    if (res.ok) {
-      const json = await res.json();
-      setData(json);
-      if (json.week) setWeek(json.week);
+    setError("");
+    try {
+      const param = w === "current" ? "" : `?week=${w}`;
+      const res = await fetch(`/api/activity${param}`);
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "Unknown error");
+        setError(`API error ${res.status}: ${text.slice(0, 200)}`);
+      } else {
+        const json = await res.json();
+        setData(json);
+        if (json.week) setWeek(json.week);
+      }
+    } catch (err) {
+      setError(`Fetch failed: ${err instanceof Error ? err.message : "unknown"}`);
     }
     setLoading(false);
   }
@@ -47,6 +56,11 @@ export default function ActivityPage() {
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-40 rounded-lg bg-gray-200" />
           ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-md bg-red-50 border border-red-200 p-4">
+          <p className="text-sm text-red-700">{error}</p>
+          <button onClick={() => fetchActivity(week)} className="mt-2 text-sm text-red-600 underline">Retry</button>
         </div>
       ) : data?.members ? (
         <WeeklyActivityFeed members={data.members} />
