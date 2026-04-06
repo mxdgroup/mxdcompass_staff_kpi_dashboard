@@ -133,22 +133,10 @@ export class WrikeClient {
     path: string,
     params: Record<string, unknown> = {},
   ): Promise<T[]> {
-    const all: T[] = [];
-    let nextPageToken: string | undefined;
-
-    do {
-      // Wrike pagination: when using nextPageToken, send ONLY the token, not the original params
-      const requestParams = nextPageToken ? { nextPageToken } : params;
-      const response = await this.request<T>(path, requestParams);
-
-      if (Array.isArray(response.data)) {
-        all.push(...response.data);
-      }
-
-      nextPageToken = response.nextPageToken;
-    } while (nextPageToken);
-
-    return all;
+    // Single page fetch — Wrike returns up to 1000 results per call.
+    // For a 6-10 person agency this is always sufficient.
+    const response = await this.request<T>(path, params);
+    return Array.isArray(response.data) ? response.data : [];
   }
 }
 
