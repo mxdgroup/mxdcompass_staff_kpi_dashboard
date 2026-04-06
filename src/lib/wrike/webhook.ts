@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { Redis } from "@upstash/redis";
+import { kv } from "@vercel/kv";
 
-const redis = Redis.fromEnv();
+const redis = kv;
 
 // ---------- Types ----------
 

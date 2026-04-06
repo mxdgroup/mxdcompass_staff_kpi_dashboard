@@ -1,7 +1,7 @@
-import { Redis } from "@upstash/redis";
+import { kv } from "@vercel/kv";
 import { redisKeyForWeek, type TransitionEntry } from "./webhook";
 
-const redis = Redis.fromEnv();
+const redis = kv;
 
 // ---------- Helpers ----------
 

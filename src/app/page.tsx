@@ -24,9 +24,9 @@ export default function DashboardPage() {
     setLoading(true);
     setError("");
     const param = w === "current" ? "" : `?week=${w}`;
-    const res = await fetch(`/kpi/api/dashboard${param}`);
+    const res = await fetch(`/api/dashboard${param}`);
     if (res.status === 401) {
-      window.location.href = "/kpi/login";
+      window.location.href = "/login";
       return;
     }
     if (!res.ok) {
@@ -42,7 +42,7 @@ export default function DashboardPage() {
 
   async function triggerSync() {
     setSyncing(true);
-    const res = await fetch("/kpi/api/sync", { method: "POST" });
+    const res = await fetch("/api/sync", { method: "POST" });
     setSyncing(false);
     if (res.ok) {
       fetchData("current");

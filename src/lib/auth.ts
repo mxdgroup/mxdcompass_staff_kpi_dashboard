@@ -19,7 +19,7 @@ export async function login(password: string): Promise<boolean> {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: SESSION_TTL,
-    path: "/kpi",
+    path: "/",
   });
   return true;
 }

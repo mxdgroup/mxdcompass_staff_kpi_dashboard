@@ -14,14 +14,14 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    const res = await fetch("/kpi/api/auth/login", {
+    const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     });
 
     if (res.ok) {
-      router.push("/kpi");
+      router.push("/");
     } else {
       setError("Invalid password");
     }

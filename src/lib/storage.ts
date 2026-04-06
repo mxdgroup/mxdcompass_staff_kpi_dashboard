@@ -1,8 +1,8 @@
-import { Redis } from "@upstash/redis";
+import { kv } from "@vercel/kv";
 import type { WeeklySnapshot } from "./types";
 import { getPriorWeeks } from "./week";
 
-const redis = Redis.fromEnv();
+const redis = kv;
 
 const SNAPSHOT_PREFIX = "kpi:snapshot:";
 const LATEST_KEY = "kpi:latest";
