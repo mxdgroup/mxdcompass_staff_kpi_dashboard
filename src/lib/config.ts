@@ -25,7 +25,7 @@ export const config: DashboardConfig = {
       name: "Matthew",
       role: "developer",
       wrikeContactId: "KUAWRNQD",
-      githubUsername: "matthewsliedrecht",
+      githubUsername: "mxd-matt",
       expectedWeeklyHours: 40,
     },
     {
