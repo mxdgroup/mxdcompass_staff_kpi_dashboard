@@ -310,8 +310,23 @@ export default function DashboardPage() {
         teamSummary={displayTeamSummary}
       />
 
-      {/* Client section: chips when no client selected, ticket table when filtered */}
-      {selectedClient ? (
+      {/* Client chips — always visible for quick switching */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold tracking-tight text-gray-900">
+            Clients
+          </h2>
+          <span className="text-xs text-gray-400">{config.clients.length} clients</span>
+        </div>
+        <ClientChips
+          clientMetrics={flowData?.clientMetrics}
+          selected={selectedClient}
+          onSelect={handleClientSelect}
+        />
+      </section>
+
+      {/* Ticket table — shown when a client is selected */}
+      {selectedClient && (
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold tracking-tight text-gray-900">
@@ -322,19 +337,6 @@ export default function DashboardPage() {
           <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
             <TicketFlowTable tickets={filteredTickets} showAssignee />
           </div>
-        </section>
-      ) : (
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold tracking-tight text-gray-900">
-              Clients
-            </h2>
-            <span className="text-xs text-gray-400">{config.clients.length} clients</span>
-          </div>
-          <ClientChips
-            clientMetrics={flowData?.clientMetrics}
-            onSelect={handleClientSelect}
-          />
         </section>
       )}
 
