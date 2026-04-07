@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { getLatestWeek, getSnapshotWithHistory } from "@/lib/storage";
+import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import type { DashboardApiResponse } from "@/lib/types";
 
 const ISO_WEEK_REGEX = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
 
 export async function GET(request: Request) {
+  await loadOverridesFromRedis();
   const authed = await isAuthenticated();
   if (!authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

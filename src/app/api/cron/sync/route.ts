@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
+import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
+  await loadOverridesFromRedis();
   // Verify cron secret
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;

@@ -6,3 +6,5 @@
 node_modules/
 tsconfig.tsbuildinfo
 .gstack/
+.vercel
+.env.vercel

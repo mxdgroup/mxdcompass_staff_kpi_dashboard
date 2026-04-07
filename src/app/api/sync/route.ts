@@ -4,11 +4,13 @@ import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent }
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
 
 export async function POST() {
+  await loadOverridesFromRedis();
   // Auth via session cookie (same as dashboard)
   const authed = await isAuthenticated();
   if (!authed) {
