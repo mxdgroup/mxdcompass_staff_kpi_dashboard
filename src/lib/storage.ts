@@ -64,9 +64,12 @@ async function localDel(key: string): Promise<void> {
 async function kvGet<T>(key: string): Promise<T | null> {
   const r = getRedis();
   if (r) {
-    const data = await r.get<string>(key);
-    if (!data) return null;
-    return typeof data === "string" ? JSON.parse(data) : (data as unknown as T);
+    // Upstash auto-parses JSON, so r.get() returns the parsed value directly.
+    // If the stored value was a JSON object, we get an object back.
+    // If it was a plain string (like a week key), we get a string back.
+    const data = await r.get<T>(key);
+    if (data === null || data === undefined) return null;
+    return data;
   }
   return localGet<T>(key);
 }
@@ -112,7 +115,7 @@ const TTL_SECONDS = 365 * 24 * 60 * 60;
 export async function saveSnapshot(snapshot: WeeklySnapshot): Promise<void> {
   const key = `${SNAPSHOT_PREFIX}${snapshot.week}`;
   await kvSet(key, JSON.stringify(snapshot), TTL_SECONDS);
-  await kvSet(LATEST_KEY, JSON.stringify(snapshot.week));
+  await kvSet(LATEST_KEY, snapshot.week);
 }
 
 export async function getSnapshot(week: string): Promise<WeeklySnapshot | null> {
