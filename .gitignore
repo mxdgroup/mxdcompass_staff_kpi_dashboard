@@ -1,10 +1,9 @@
 .data/
+.vercel
 .env
 .env.local
+.env.example
 .DS_Store
-.next/
 node_modules/
-tsconfig.tsbuildinfo
+.next/
 .gstack/
-.vercel
-.env.vercel

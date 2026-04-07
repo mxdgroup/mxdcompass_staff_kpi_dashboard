@@ -12,11 +12,16 @@ interface AttentionItem {
   link?: string;
 }
 
+const TYPE_STYLES: Record<AttentionItem["type"], { bg: string; dot: string; label: string }> = {
+  returned: { bg: "bg-red-50 border-red-100", dot: "bg-red-500", label: "Returned" },
+  stuck: { bg: "bg-amber-50 border-amber-100", dot: "bg-amber-400", label: "Stuck" },
+  idle: { bg: "bg-orange-50 border-orange-100", dot: "bg-orange-400", label: "Idle" },
+};
+
 export function AttentionItems({ employees }: AttentionItemsProps) {
   const items: AttentionItem[] = [];
 
   for (const emp of employees) {
-    // Tasks returned for review
     const returned = emp.tasks.filter((t) => t.returnedForReview);
     for (const task of returned) {
       items.push({
@@ -26,7 +31,6 @@ export function AttentionItems({ employees }: AttentionItemsProps) {
       });
     }
 
-    // Tasks stuck >5 days with no comments
     const now = Date.now();
     const fiveDays = 5 * 24 * 60 * 60 * 1000;
     const stuck = emp.tasks.filter((t) => {
@@ -42,7 +46,6 @@ export function AttentionItems({ employees }: AttentionItemsProps) {
       });
     }
 
-    // Members with zero completed tasks
     if (emp.tasksCompleted === 0 && emp.tasks.length > 0) {
       items.push({
         type: "idle",
@@ -53,36 +56,41 @@ export function AttentionItems({ employees }: AttentionItemsProps) {
 
   if (items.length === 0) {
     return (
-      <div className="rounded-lg bg-green-50 border border-green-200 p-4">
+      <div className="rounded-xl bg-green-50 border border-green-100 px-5 py-4 flex items-center gap-3">
+        <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
         <p className="text-sm text-green-700">No attention items this week</p>
       </div>
     );
   }
 
-  const icons = { returned: "\u26A0\uFE0F", stuck: "\u23F3", idle: "\u{1F6D1}" };
-  const colors = {
-    returned: "bg-red-50 border-red-200",
-    stuck: "bg-amber-50 border-amber-200",
-    idle: "bg-orange-50 border-orange-200",
-  };
-
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-medium text-gray-500">Attention Items</h3>
-      {items.map((item, i) => (
-        <div key={i} className={`rounded-lg border p-3 ${colors[item.type]}`}>
-          <p className="text-sm">
-            {icons[item.type]}{" "}
-            {item.link ? (
-              <a href={item.link} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
-                {item.message}
-              </a>
-            ) : (
-              item.message
-            )}
-          </p>
-        </div>
-      ))}
-    </div>
+    <section>
+      <h2 className="text-lg font-semibold tracking-tight text-gray-900 mb-4">
+        Attention Items
+        <span className="ml-2 text-sm font-normal text-gray-400">({items.length})</span>
+      </h2>
+      <div className="space-y-2">
+        {items.map((item, i) => {
+          const style = TYPE_STYLES[item.type];
+          return (
+            <div key={i} className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${style.bg}`}>
+              <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${style.dot}`} />
+              <div className="min-w-0">
+                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">{style.label}</span>
+                <p className="text-sm text-gray-700 mt-0.5">
+                  {item.link ? (
+                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {item.message}
+                    </a>
+                  ) : (
+                    item.message
+                  )}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

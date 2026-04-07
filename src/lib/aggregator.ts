@@ -75,6 +75,7 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
       });
 
       const tasksCompleted = tasks.filter((t) => t.completedDate !== null).length;
+      const tasksActive = tasks.filter((t) => t.status.toLowerCase() !== "new").length;
 
       // GitHub data (null for non-engineers)
       let github: GitHubEmployeeData | null = null;
@@ -103,6 +104,7 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
         role: member.role,
         wrikeContactId: member.wrikeContactId,
         tasksCompleted,
+        tasksActive,
         tasksUpdated: tasks.length,
         pipelineMovement: pipelineData.byMember[member.wrikeContactId] ?? 0,
         returnForReviewCount: returnData.byMember[member.wrikeContactId] ?? 0,

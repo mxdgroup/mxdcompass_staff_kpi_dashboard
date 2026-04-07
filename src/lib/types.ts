@@ -37,6 +37,7 @@ export interface EmployeeWeekData {
   wrikeContactId: string;
   // Wrike metrics
   tasksCompleted: number;
+  tasksActive: number; // all assigned tasks not in "New" status
   tasksUpdated: number;
   pipelineMovement: number;
   returnForReviewCount: number;

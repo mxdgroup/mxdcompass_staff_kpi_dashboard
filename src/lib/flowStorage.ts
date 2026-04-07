@@ -61,9 +61,11 @@ export async function getFlowSnapshot(
 
   const redis = await getRedis();
   if (redis) {
-    const data = await redis.get<FlowSnapshot>(key);
+    const data = await redis.get<string>(key);
     if (!data) return null;
-    return data;
+    return typeof data === "string"
+      ? JSON.parse(data)
+      : (data as unknown as FlowSnapshot);
   }
 
   // Local file fallback

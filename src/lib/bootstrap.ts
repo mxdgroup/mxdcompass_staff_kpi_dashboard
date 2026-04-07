@@ -1,5 +1,5 @@
 // Auto-discover Wrike contact IDs and custom field IDs from the API
-// Stores results in Redis (production) or .data/ (local dev)
+// Writes results to .data/config-overrides.json for runtime merging
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -9,7 +9,6 @@ import { config } from "./config";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const OVERRIDES_FILE = path.join(DATA_DIR, "config-overrides.json");
-const REDIS_OVERRIDES_KEY = "kpi:config-overrides";
 
 export interface ConfigOverrides {
   contactIds: Record<string, string>; // team member name -> wrikeContactId
@@ -59,34 +58,18 @@ export async function discoverWrikeConfig(): Promise<ConfigOverrides> {
     console.warn("[bootstrap] No 'Effort' custom field found");
   }
 
-  // 3. Write overrides (Redis if available, filesystem for local dev)
+  // 3. Write overrides
   const overrides: ConfigOverrides = {
     contactIds,
     effortCustomFieldId,
     discoveredAt: new Date().toISOString(),
   };
 
-  try {
-    const { Redis } = await import("@upstash/redis");
-    if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-      const redis = Redis.fromEnv();
-      await redis.set(REDIS_OVERRIDES_KEY, JSON.stringify(overrides));
-      console.log(`[bootstrap] Config overrides written to Redis (${REDIS_OVERRIDES_KEY})`);
-    } else {
-      throw new Error("No Redis");
-    }
-  } catch {
-    // Fallback to filesystem (local dev only)
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(overrides, null, 2), "utf-8");
-      console.log(`[bootstrap] Config overrides written to ${OVERRIDES_FILE}`);
-    } catch (fsErr) {
-      console.warn(`[bootstrap] Could not write to filesystem: ${fsErr}`);
-    }
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+  fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(overrides, null, 2), "utf-8");
+  console.log(`[bootstrap] Config overrides written to ${OVERRIDES_FILE}`);
 
   // 4. Apply to running config immediately
   applyOverrides(overrides);
@@ -111,7 +94,7 @@ export function applyOverrides(overrides: ConfigOverrides): void {
 }
 
 /**
- * Load overrides from Redis or disk.
+ * Load overrides from disk if they exist.
  * Called once at config module initialization.
  */
 export function loadOverridesFromDisk(): void {
@@ -123,24 +106,5 @@ export function loadOverridesFromDisk(): void {
     }
   } catch {
     // Silently ignore — overrides are optional
-  }
-}
-
-/**
- * Load overrides from Redis (async version for serverless).
- * Call this at the start of API routes on Vercel.
- */
-export async function loadOverridesFromRedis(): Promise<void> {
-  try {
-    if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return;
-    const { Redis } = await import("@upstash/redis");
-    const redis = Redis.fromEnv();
-    const raw = await redis.get<string>(REDIS_OVERRIDES_KEY);
-    if (raw) {
-      const overrides: ConfigOverrides = typeof raw === "string" ? JSON.parse(raw) : raw as unknown as ConfigOverrides;
-      applyOverrides(overrides);
-    }
-  } catch {
-    // Silently ignore
   }
 }
