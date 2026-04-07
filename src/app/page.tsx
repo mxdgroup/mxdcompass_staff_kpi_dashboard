@@ -113,7 +113,7 @@ export default function DashboardPage() {
 
     setLoading(false);
 
-    if (!weekly?.current && !flow) {
+    if (!weekly?.current && !flow && w === "current") {
       triggerBootstrap();
     }
   }
