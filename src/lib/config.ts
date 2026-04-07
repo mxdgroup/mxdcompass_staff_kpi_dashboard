@@ -1,4 +1,4 @@
-export type Role = "developer" | "designer" | "account-manager";
+export type Role = "developer" | "designer" | "account-manager" | "brand-design";
 
 export interface TeamMember {
   name: string;
@@ -46,7 +46,7 @@ export const config: DashboardConfig = {
   team: [
     {
       name: "Matthew",
-      role: "developer",
+      role: "account-manager",
       wrikeContactId: "", // TODO: populate from GET /contacts
       githubUsername: "matthewsliedrecht",
       expectedWeeklyHours: 40,
@@ -60,7 +60,7 @@ export const config: DashboardConfig = {
     },
     {
       name: "Andrea",
-      role: "account-manager",
+      role: "brand-design",
       wrikeContactId: "", // TODO: populate from GET /contacts
       githubUsername: null,
       expectedWeeklyHours: 40,

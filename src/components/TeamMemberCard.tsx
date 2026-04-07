@@ -17,6 +17,7 @@ const ROLE_BADGE: Record<Role, { bg: string; text: string }> = {
   developer: { bg: "bg-blue-100", text: "text-blue-700" },
   designer: { bg: "bg-violet-100", text: "text-violet-700" },
   "account-manager": { bg: "bg-green-100", text: "text-green-700" },
+  "brand-design": { bg: "bg-pink-100", text: "text-pink-700" },
 };
 
 function fmt(value: number | null | undefined, suffix = ""): string {
