@@ -25,14 +25,10 @@ export class WrikeClient {
 
   constructor(token?: string) {
     const resolved =
-      token ??
-      process.env.WRIKE_PERMANENT_ACCESS_TOKEN ??
-      process.env.WRIKE_TOKEN ??
-      process.env.wrike_permanent_access_token ??
-      undefined;
+      token ?? process.env.WRIKE_PERMANENT_ACCESS_TOKEN ?? undefined;
     if (!resolved) {
       throw new Error(
-        "Missing Wrike token. Set WRIKE_PERMANENT_ACCESS_TOKEN, WRIKE_TOKEN, or wrike_permanent_access_token.",
+        "Missing Wrike token. Set WRIKE_PERMANENT_ACCESS_TOKEN or pass a token.",
       );
     }
     this.token = resolved;
@@ -127,16 +123,110 @@ export class WrikeClient {
     }
   }
 
+  // ---------- single PUT ----------
+
+  async put<T>(
+    path: string,
+    body: Record<string, string> = {},
+    attempt = 0,
+  ): Promise<WrikeApiResponse<T>> {
+    await this.throttle();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${BASE_URL}${path}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `bearer ${this.token}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(body).toString(),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+
+        if (isRetryable(response.status) && attempt < MAX_RETRIES) {
+          await wait(jitteredBackoffMs(attempt));
+          return this.put<T>(path, body, attempt + 1);
+        }
+
+        const err = buildServiceError(
+          `Wrike API error ${response.status}: ${text.slice(0, 300)}`,
+          response.status,
+          text,
+        );
+        throw new Error(err.message);
+      }
+
+      return (await response.json()) as WrikeApiResponse<T>;
+    } catch (error: unknown) {
+      const isAbort =
+        error instanceof DOMException && error.name === "AbortError";
+      const isNetwork = error instanceof TypeError || isAbort;
+
+      if (isNetwork && attempt < MAX_RETRIES) {
+        await wait(jitteredBackoffMs(attempt));
+        return this.put<T>(path, body, attempt + 1);
+      }
+
+      if (isAbort) {
+        throw new Error(`Wrike API timeout: request exceeded ${REQUEST_TIMEOUT_MS}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   // ---------- paginated GET ----------
 
   async get<T>(
     path: string,
     params: Record<string, unknown> = {},
   ): Promise<T[]> {
-    // Single page fetch — Wrike returns up to 1000 results per call.
-    // For a 6-10 person agency this is always sufficient.
-    const response = await this.request<T>(path, params);
-    return Array.isArray(response.data) ? response.data : [];
+    const all: T[] = [];
+    let nextPageToken: string | undefined;
+
+    do {
+      const requestParams = { ...params };
+      if (nextPageToken) {
+        requestParams.nextPageToken = nextPageToken;
+      }
+
+      let response: WrikeApiResponse<T>;
+      try {
+        response = await this.request<T>(path, requestParams);
+      } catch (err) {
+        // If pagination token causes an error, return what we have so far
+        if (nextPageToken && all.length > 0) {
+          console.warn(`[wrike] Pagination failed for ${path}, returning ${all.length} items collected so far`);
+          break;
+        }
+        throw err;
+      }
+
+      if (Array.isArray(response.data)) {
+        all.push(...response.data);
+      }
+
+      // Only continue pagination if we got data AND a valid token.
+      // Some Wrike endpoints (e.g. timelogs) return nextPageToken even
+      // with 0 results, causing the next request to fail.
+      const gotData = Array.isArray(response.data) && response.data.length > 0;
+      nextPageToken =
+        gotData &&
+        response.nextPageToken &&
+        typeof response.nextPageToken === "string"
+          ? response.nextPageToken
+          : undefined;
+    } while (nextPageToken);
+
+    return all;
   }
 }
 

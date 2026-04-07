@@ -1,5 +1,14 @@
-import { getRedis } from "../redis";
+import { Redis } from "@upstash/redis";
 import { redisKeyForWeek, type TransitionEntry } from "./webhook";
+import { isRedisAvailable } from "../storage";
+
+const hasRedis = isRedisAvailable();
+let _redis: Redis | null = null;
+function getRedis(): Redis | null {
+  if (!hasRedis) return null;
+  if (!_redis) _redis = Redis.fromEnv();
+  return _redis;
+}
 
 // ---------- Helpers ----------
 
@@ -46,14 +55,18 @@ export async function getTransitionsInRange(
   startTimestamp: number,
   endTimestamp: number,
 ): Promise<TransitionEntry[]> {
+  const redis = getRedis();
+  if (!redis) return []; // No webhook data without Redis — comment parser fills gaps
+
   const keys = weekKeysBetween(startTimestamp, endTimestamp);
   const results: TransitionEntry[] = [];
 
-  const redis = getRedis();
   for (const key of keys) {
-    const members = await redis.zrangebyscore(key, startTimestamp, endTimestamp);
+    const members = (await redis.zrange(key, startTimestamp, endTimestamp, {
+      byScore: true,
+    })) as string[];
     for (const raw of members) {
-      const entry = parseMember(raw);
+      const entry = parseMember(typeof raw === "string" ? raw : JSON.stringify(raw));
       results.push({
         taskId: entry.taskId,
         fromStatusId: entry.fromStatusId,

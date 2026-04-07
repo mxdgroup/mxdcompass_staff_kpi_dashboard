@@ -6,10 +6,6 @@ interface WeekSelectorProps {
 }
 
 export function WeekSelector({ currentWeek, onWeekChange }: WeekSelectorProps) {
-  if (!currentWeek || !currentWeek.includes("-W")) {
-    return <span className="text-sm text-gray-400">Loading...</span>;
-  }
-
   const [yearStr, weekPart] = currentWeek.split("-W");
   const year = parseInt(yearStr, 10);
   const weekNum = parseInt(weekPart, 10);
@@ -33,14 +29,14 @@ export function WeekSelector({ currentWeek, onWeekChange }: WeekSelectorProps) {
         onClick={() => navigate(-1)}
         className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
       >
-        {"← Prev"}
+        {"\u2190"} Prev
       </button>
       <span className="text-sm font-medium text-gray-700">{currentWeek}</span>
       <button
         onClick={() => navigate(1)}
         className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
       >
-        {"Next →"}
+        Next {"\u2192"}
       </button>
     </div>
   );

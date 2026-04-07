@@ -8,69 +8,89 @@ export interface TeamMember {
   expectedWeeklyHours: number;
 }
 
+export interface ClientConfig {
+  name: string;
+  wrikeFolderId: string;
+}
+
 export interface DashboardConfig {
   team: TeamMember[];
-  wrikeFolderIds: string[];
+  clients: ClientConfig[];
+  wrikeFolderIds: string[]; // Derived from clients — populated below
   githubOrg: string;
   githubRepos: string[];
   approvalWorkflowOwner: string;
   returnForReviewStatusName: string;
   clientReviewStatusName: string;
   completedStatusNames: string[];
+  // Flow dashboard stage names
+  plannedStatusNames: string[];
+  inProgressStatusName: string;
+  inReviewStatusName: string;
+  clientPendingStatusName: string;
+  // Effort tracking
+  effortCustomFieldId: string;
 }
+
+// --- CONFIGURE YOUR TEAM HERE ---
+// Wrike contact IDs: call GET /contacts with your token to find them
+// GitHub usernames: null for non-engineers
+const clients: ClientConfig[] = [
+  { name: "Clinic 27", wrikeFolderId: "MQAAAAEAs_35" },
+  { name: "Hacker Kitchens", wrikeFolderId: "MQAAAAEAs-ES" },
+  { name: "Suzanne Code", wrikeFolderId: "MQAAAAEAs_3-" },
+  { name: "MxD (Internal)", wrikeFolderId: "MQAAAAEFAONl" },
+];
 
 export const config: DashboardConfig = {
   team: [
     {
       name: "Matthew",
       role: "developer",
-      wrikeContactId: "KUAWRNQD",
-      githubUsername: "mxd-matt",
+      wrikeContactId: "", // TODO: populate from GET /contacts
+      githubUsername: "matthewsliedrecht",
       expectedWeeklyHours: 40,
     },
     {
       name: "Ivan",
       role: "developer",
-      wrikeContactId: "KUAXD6OG",
-      githubUsername: null, // TODO: set GitHub username when known
+      wrikeContactId: "", // TODO: populate from GET /contacts
+      githubUsername: "", // TODO: set GitHub username
       expectedWeeklyHours: 40,
     },
     {
       name: "Andrea",
       role: "account-manager",
-      wrikeContactId: "KUAXD23C",
+      wrikeContactId: "", // TODO: populate from GET /contacts
       githubUsername: null,
-      expectedWeeklyHours: 40,
-    },
-    {
-      name: "Christian",
-      role: "developer",
-      wrikeContactId: "KUAW7PGR",
-      githubUsername: null, // TODO: set GitHub username when known
       expectedWeeklyHours: 40,
     },
   ],
 
-  // Use the top-level "Client Work" space with descendants=true to get all client tasks
-  wrikeFolderIds: [
-    "MQAAAAEAs-EQ",  // Client Work (root space — includes all client subfolders)
-  ],
+  clients,
+  wrikeFolderIds: clients.map((c) => c.wrikeFolderId),
 
   githubOrg: "mxdgroup",
   githubRepos: [
     "mxd-compass",
-    "mxdcompass_staff_kpi_dashboard",
   ],
 
-  // Matthew handles client approvals
-  approvalWorkflowOwner: "KUAWRNQD",
+  approvalWorkflowOwner: "", // TODO: set to Matt's Wrike contact ID
 
-  // Wrike workflow status names to match
-  // Current workflow: New → In Progress → Completed (simple)
-  // Adjust these if you add custom statuses like "Return for Review" or "Client Review"
   returnForReviewStatusName: "Return for Review",
   clientReviewStatusName: "Client Review",
-  completedStatusNames: ["Completed"],
+  completedStatusNames: ["Completed", "Approved", "Complete"],
+
+  // Flow dashboard — status names matching the Client Work workflow
+  // Known IDs: New=IEAGV532JMGNL7LG, Planned=IEAGV532JMGNL7LQ,
+  // In Progress=IEAGV532JMGNL7L2, In Review=IEAGV532JMGNL7ME,
+  // Client Pending=IEAGV532JMGYGIPO
+  plannedStatusNames: ["New", "Planned"],
+  inProgressStatusName: "In Progress",
+  inReviewStatusName: "In Review",
+  clientPendingStatusName: "Client Pending",
+
+  effortCustomFieldId: "", // TODO: populate from GET /customfields
 };
 
 // Derived helpers
@@ -84,4 +104,37 @@ export function getGithubMembers(): TeamMember[] {
 
 export function getMemberByContactId(contactId: string): TeamMember | undefined {
   return config.team.find((m) => m.wrikeContactId === contactId);
+}
+
+export function getClientByFolderId(folderId: string): ClientConfig | undefined {
+  return config.clients.find((c) => c.wrikeFolderId === folderId);
+}
+
+// Load persisted config overrides (contact IDs, custom field IDs) from disk
+// Only runs server-side (node:fs not available in browser)
+if (typeof window === "undefined") {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path");
+    const overridesPath = path.join(process.cwd(), ".data", "config-overrides.json");
+    if (fs.existsSync(overridesPath)) {
+      const raw = fs.readFileSync(overridesPath, "utf-8");
+      const overrides = JSON.parse(raw);
+      if (overrides.contactIds) {
+        for (const member of config.team) {
+          if (overrides.contactIds[member.name]) {
+            member.wrikeContactId = overrides.contactIds[member.name];
+          }
+        }
+      }
+      if (overrides.effortCustomFieldId) {
+        (config as { effortCustomFieldId: string }).effortCustomFieldId =
+          overrides.effortCustomFieldId;
+      }
+    }
+  } catch {
+    // Silently ignore — overrides are optional
+  }
 }

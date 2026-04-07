@@ -118,3 +118,76 @@ export interface DashboardApiResponse {
   history: WeeklySnapshot[];
   lastSynced: string | null;
 }
+
+// --- Flow Dashboard (Kanban metrics) ---
+
+export interface StageTransition {
+  fromStage: string;
+  toStage: string;
+  fromStageId: string;
+  toStageId: string;
+  timestamp: string; // ISO datetime
+  source: "webhook" | "comment";
+}
+
+export interface StageDuration {
+  stageName: string;
+  stageId: string;
+  enteredAt: string;
+  exitedAt: string | null; // null = still in this stage
+  durationHours: number;
+}
+
+export interface TicketFlowEntry {
+  taskId: string;
+  title: string;
+  permalink: string;
+  assigneeContactId: string;
+  assigneeName: string;
+  clientName: string;
+  effortScore: number | null;
+  transitions: StageTransition[];
+  stageDurations: StageDuration[];
+  currentStage: string;
+  currentStageAgeHours: number;
+  enteredPlanDate: string | null;
+  completedDate: string | null;
+  totalCycleHours: number | null; // Planned → Complete
+  executionHours: number | null; // Planned → In Review
+}
+
+export interface FlowMetrics {
+  wip: number;
+  throughput: number;
+  cycleTimeP50Hours: number | null;
+  cycleTimeP85Hours: number | null;
+  agingItems: number; // tasks > 5 days in current stage
+  flowEfficiency: number | null; // % time in active stages vs total
+  bottleneckStage: { name: string; avgDwellHours: number } | null;
+  stageDistribution: { stageName: string; count: number }[];
+  dailyFlow: { date: string; stages: Record<string, number> }[];
+}
+
+export interface EmployeeFlowMetrics extends FlowMetrics {
+  name: string;
+  contactId: string;
+  role: Role;
+  medianExecutionHours: number | null;
+  avgEffortScore: number | null;
+  flowEfficiency: number | null; // % time in active stages
+  tickets: TicketFlowEntry[];
+}
+
+export interface FlowSnapshot {
+  week: string;
+  syncedAt: string;
+  tickets: TicketFlowEntry[];
+  agencyMetrics: FlowMetrics;
+  clientMetrics: Record<string, FlowMetrics>; // keyed by client name
+  employeeMetrics: Record<string, EmployeeFlowMetrics>; // keyed by contactId
+}
+
+export interface FlowApiResponse {
+  data: FlowSnapshot | null;
+  week: string;
+}
