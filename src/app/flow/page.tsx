@@ -10,6 +10,7 @@ import { AgingWipChart } from "@/components/AgingWipChart";
 import { CumulativeFlowDiagram } from "@/components/CumulativeFlowDiagram";
 import { CycleTimeScatter } from "@/components/CycleTimeScatter";
 import { TicketFlowTable } from "@/components/TicketFlowTable";
+import { TicketFlowDots } from "@/components/TicketFlowDots";
 import { ClientSelector } from "@/components/ClientSelector";
 
 const validClientNames = new Set(config.clients.map((c) => c.name));
@@ -20,6 +21,8 @@ export default function FlowDetailsPage() {
 
   const clientParam = searchParams.get("client") ?? "";
   const weekParam = searchParams.get("week") ?? "current";
+  const viewParam = searchParams.get("view");
+  const activeView = viewParam === "flow" ? "flow" : "tickets";
   const selectedClient = validClientNames.has(clientParam) ? clientParam : "";
 
   // Strip invalid client param
@@ -177,16 +180,41 @@ export default function FlowDetailsPage() {
 
       <CycleTimeScatter tickets={filteredTickets} />
 
-      {/* Full ticket table */}
+      {/* View tabs + ticket table */}
       <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
-        <h2 className="text-[13px] font-medium text-gray-400 tracking-wide mb-4">
-          All Tickets ({filteredTickets.length})
-        </h2>
-        <TicketFlowTable
-          tickets={filteredTickets}
-          showAssignee
-          showClient={!selectedClient}
-        />
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-[13px] font-medium text-gray-400 tracking-wide">
+            All Tickets ({filteredTickets.length})
+          </h2>
+          <div className="flex gap-1">
+            {([["tickets", "Tickets"], ["flow", "Ticket Flow"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => updateParams({ view: key === "tickets" ? null : key })}
+                className={`px-2.5 py-1 text-xs rounded-md font-medium ${
+                  activeView === key
+                    ? "bg-gray-900 text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {activeView === "tickets" ? (
+          <TicketFlowTable
+            tickets={filteredTickets}
+            showAssignee
+            showClient={!selectedClient}
+          />
+        ) : (
+          <TicketFlowDots
+            tickets={filteredTickets}
+            showAssignee
+            showClient={!selectedClient}
+          />
+        )}
       </div>
     </main>
   );
