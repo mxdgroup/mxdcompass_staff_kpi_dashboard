@@ -24,6 +24,11 @@ function getRedis(): Redis | null {
 // Re-export for modules that need direct Redis access
 export const redis = hasRedis ? Redis.fromEnv() : (null as unknown as Redis);
 
+/** Lazy Redis getter for modules that need it after cold start. */
+export function getSharedRedis(): Redis | null {
+  return getRedis();
+}
+
 // ---------------------------------------------------------------------------
 // Local file helpers
 // ---------------------------------------------------------------------------

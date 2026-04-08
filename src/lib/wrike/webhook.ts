@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { redis as redisClient } from "../storage";
+import { getSharedRedis } from "../storage";
 
 // ---------- Types ----------
 
@@ -26,17 +26,18 @@ export interface TransitionEntry {
 const WEBHOOK_SECRET_KEY = "kpi:webhook:secret";
 
 export async function storeWebhookSecret(secret: string): Promise<void> {
-  if (!redisClient) {
+  const r = getSharedRedis(); if (!r) {
     console.error("[webhook] No Redis available, cannot store secret");
     return;
   }
-  await redisClient.set(WEBHOOK_SECRET_KEY, secret);
+  await r.set(WEBHOOK_SECRET_KEY, secret);
   console.log("[webhook] Handshake secret stored in Redis");
 }
 
 async function getWebhookSecret(): Promise<string | null> {
-  if (redisClient) {
-    const stored = await redisClient.get<string>(WEBHOOK_SECRET_KEY);
+  const r = getSharedRedis();
+  if (r) {
+    const stored = await r.get<string>(WEBHOOK_SECRET_KEY);
     if (stored) return stored;
   }
   return process.env.WRIKE_WEBHOOK_SECRET ?? null;
@@ -90,7 +91,7 @@ const TTL_SECONDS = 365 * 24 * 60 * 60;
 export async function storeTransition(
   event: WrikeWebhookEvent,
 ): Promise<void> {
-  if (!redisClient) return;
+  const r = getSharedRedis(); if (!r) return;
 
   const eventDate = new Date(event.lastUpdatedDate);
   const score = Math.floor(eventDate.getTime() / 1000);
@@ -109,14 +110,14 @@ export async function storeTransition(
   const memberValue = JSON.stringify({ ...entry, _dedup: dedupKey });
 
   const dedupSetKey = `${key}:dedup`;
-  const alreadyExists = await redisClient.sismember(dedupSetKey, dedupKey);
+  const alreadyExists = await r.sismember(dedupSetKey, dedupKey);
   if (alreadyExists) return;
 
-  const pipe = redisClient.pipeline();
+  const pipe = r.pipeline();
   pipe.zadd(key, { score, member: memberValue });
   pipe.sadd(dedupSetKey, dedupKey);
 
-  const ttl = await redisClient.ttl(key);
+  const ttl = await r.ttl(key);
   if (ttl === -1 || ttl === -2) {
     pipe.expire(key, TTL_SECONDS);
     pipe.expire(dedupSetKey, TTL_SECONDS);
