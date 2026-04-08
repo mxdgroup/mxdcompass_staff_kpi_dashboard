@@ -9,6 +9,7 @@ import { config } from "./config";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const OVERRIDES_FILE = path.join(DATA_DIR, "config-overrides.json");
+const REDIS_OVERRIDES_KEY = "kpi:config-overrides";
 
 export interface ConfigOverrides {
   contactIds: Record<string, string>; // team member name -> wrikeContactId
@@ -65,11 +66,27 @@ export async function discoverWrikeConfig(): Promise<ConfigOverrides> {
     discoveredAt: new Date().toISOString(),
   };
 
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  // Write to Redis (production on Vercel) and filesystem (local dev)
+  try {
+    const { getSharedRedis } = await import("./storage");
+    const redis = getSharedRedis();
+    if (redis) {
+      await redis.set(REDIS_OVERRIDES_KEY, JSON.stringify(overrides));
+      console.log(`[bootstrap] Config overrides written to Redis (${REDIS_OVERRIDES_KEY})`);
+    }
+  } catch {
+    console.warn("[bootstrap] Could not write to Redis");
   }
-  fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(overrides, null, 2), "utf-8");
-  console.log(`[bootstrap] Config overrides written to ${OVERRIDES_FILE}`);
+
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(overrides, null, 2), "utf-8");
+    console.log(`[bootstrap] Config overrides written to ${OVERRIDES_FILE}`);
+  } catch {
+    console.warn("[bootstrap] Could not write to filesystem (read-only on Vercel)");
+  }
 
   // 4. Apply to running config immediately
   applyOverrides(overrides);
@@ -106,5 +123,24 @@ export function loadOverridesFromDisk(): void {
     }
   } catch {
     // Silently ignore — overrides are optional
+  }
+}
+
+/**
+ * Load overrides from Redis (async, for serverless on Vercel).
+ * Call at the start of API routes to rehydrate contact IDs after cold start.
+ */
+export async function loadOverridesFromRedis(): Promise<void> {
+  try {
+    const { getSharedRedis } = await import("./storage");
+    const redis = getSharedRedis();
+    if (!redis) return;
+    const raw = await redis.get<string>(REDIS_OVERRIDES_KEY);
+    if (raw) {
+      const overrides: ConfigOverrides = typeof raw === "string" ? JSON.parse(raw) : raw as unknown as ConfigOverrides;
+      applyOverrides(overrides);
+    }
+  } catch {
+    // Silently ignore
   }
 }

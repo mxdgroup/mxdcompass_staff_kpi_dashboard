@@ -1,3 +1,4 @@
+import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
@@ -10,7 +11,7 @@ export const maxDuration = 300;
 
 export async function POST() {
   // Auth via session cookie (same as dashboard)
-  const authed = await isAuthenticated();
+  await loadOverridesFromRedis();  const authed = await isAuthenticated();
   if (!authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

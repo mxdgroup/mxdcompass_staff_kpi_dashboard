@@ -1,3 +1,4 @@
+import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
