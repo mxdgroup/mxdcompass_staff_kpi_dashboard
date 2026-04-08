@@ -203,17 +203,19 @@ export async function fetchWeeklyMemberData(
   }
 
   // ---- Timelogs ----
-  // Use base /timelogs endpoint with trackedDate filter, then filter by contact.
-  // The /contacts/{id}/timelogs endpoint does not accept trackedDate.
-  const allTimelogs = await client.get<WrikeTimelog>(
-    `/contacts/${contactId}/timelogs`,
-    {
-      createdDate: wrikeDateRange(dateRange),
-    },
-  );
-  const timelogs = allTimelogs;
-
-  const totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
+  // The /contacts/{id}/timelogs endpoint rejects date filter params.
+  // Fetch without filters and accept all timelogs for this contact.
+  // If the endpoint fails entirely, gracefully degrade to 0 hours.
+  let timelogs: WrikeTimelog[] = [];
+  let totalHours = 0;
+  try {
+    timelogs = await client.get<WrikeTimelog>(
+      `/contacts/${contactId}/timelogs`,
+    );
+    totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
+  } catch (err) {
+    console.warn(`[wrike] Timelogs fetch failed for contact ${contactId}, skipping:`, err);
+  }
 
   return { tasks: allTasks, comments: commentsByTask, timelogs, totalHours };
 }
