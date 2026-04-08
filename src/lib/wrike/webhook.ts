@@ -32,22 +32,47 @@ export interface TransitionEntry {
   eventAuthorId: string;
 }
 
+// ---------- Webhook secret storage ----------
+
+const WEBHOOK_SECRET_KEY = "kpi:webhook:secret";
+
+export async function storeWebhookSecret(secret: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  await redis.set(WEBHOOK_SECRET_KEY, secret);
+  console.log("[webhook] Handshake secret stored in Redis");
+}
+
+async function getWebhookSecret(): Promise<string | null> {
+  // Try Redis first (set during handshake), fall back to env var
+  const redis = getRedis();
+  if (redis) {
+    const stored = await redis.get<string>(WEBHOOK_SECRET_KEY);
+    if (stored) return stored;
+  }
+  return process.env.WRIKE_WEBHOOK_SECRET ?? null;
+}
+
 // ---------- Signature validation ----------
 
-export function validateSignature(body: string, signature: string): boolean {
-  const secret = process.env.WRIKE_WEBHOOK_SECRET;
+export async function validateSignature(body: string, signature: string): Promise<boolean> {
+  const secret = await getWebhookSecret();
   if (!secret) {
-    console.error("WRIKE_WEBHOOK_SECRET is not set");
+    console.error("[webhook] No webhook secret available (not in Redis or env)");
     return false;
   }
   const expected = crypto
     .createHmac("sha256", secret)
     .update(body, "utf8")
     .digest("hex");
-  return crypto.timingSafeEqual(
-    Buffer.from(expected, "hex"),
-    Buffer.from(signature, "hex"),
-  );
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, "hex"),
+      Buffer.from(signature, "hex"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 // ---------- ISO-week helper ----------
