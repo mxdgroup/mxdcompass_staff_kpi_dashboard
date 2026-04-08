@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 const TABS = [
   { label: "Overview", href: "/" },
@@ -10,14 +10,12 @@ const TABS = [
 
 export function NavTabs() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const qs = searchParams.toString();
 
   return (
     <nav className="flex gap-1 mb-8">
       {TABS.map((tab) => {
         const active = pathname === tab.href;
-        const href = qs ? `${tab.href}?${qs}` : tab.href;
+        const href = tab.href;
         return (
           <Link
             key={tab.href}
