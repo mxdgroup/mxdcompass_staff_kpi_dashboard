@@ -8,12 +8,12 @@ interface AgencyOverviewProps {
 }
 
 const STAGE_COLORS: Record<string, string> = {
-  New: "#94a3b8",
-  Planned: "#cbd5e1",
-  "In Progress": "#60a5fa",
-  "In Review": "#a78bfa",
-  "Client Pending": "#fbbf24",
-  Completed: "#4ade80",
+  New: "oklch(0.70 0.04 250)",
+  Planned: "oklch(0.78 0.03 250)",
+  "In Progress": "oklch(0.60 0.15 250)",
+  "In Review": "oklch(0.60 0.12 300)",
+  "Client Pending": "oklch(0.75 0.14 80)",
+  Completed: "oklch(0.65 0.15 155)",
 };
 
 function DeltaBadge({
@@ -23,21 +23,20 @@ function DeltaBadge({
   delta: number | null;
   invert?: boolean;
 }) {
-  if (delta === null) return <span className="text-xs text-gray-400">No prior data</span>;
+  if (delta === null) return <span className="text-xs text-gray-300">No prior data</span>;
 
   const isUp = delta > 0;
-  const arrow = isUp ? "\u25B2" : delta < 0 ? "\u25BC" : "\u25CF";
   const isGood = invert ? !isUp : isUp;
   const color =
     delta === 0
-      ? "text-amber-500"
+      ? "text-amber-500 bg-amber-50"
       : isGood
-        ? "text-green-600"
-        : "text-red-600";
+        ? "text-green-700 bg-green-50"
+        : "text-red-700 bg-red-50";
 
   return (
-    <span className={`text-sm font-medium ${color}`}>
-      {arrow} {Math.abs(delta)}%
+    <span className={`inline-flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded-md ${color}`}>
+      {isUp ? "\u2191" : delta < 0 ? "\u2193" : "\u2022"} {Math.abs(delta)}%
     </span>
   );
 }
@@ -46,7 +45,7 @@ function MetricCard({
   label,
   value,
   subtitle,
-  color = "text-gray-900",
+  accentClass = "",
   delta,
   invertDelta,
   placeholder,
@@ -54,26 +53,26 @@ function MetricCard({
   label: string;
   value?: string | number;
   subtitle?: string;
-  color?: string;
+  accentClass?: string;
   delta?: number | null;
   invertDelta?: boolean;
   placeholder?: string;
 }) {
   return (
-    <div className="rounded-lg bg-white p-4 shadow-sm border border-gray-100">
-      <p className="text-sm font-medium text-gray-500">{label}</p>
+    <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
+      <p className="text-[13px] font-medium text-gray-400 tracking-wide">{label}</p>
       {placeholder ? (
-        <p className="mt-2 text-sm text-gray-400 italic">{placeholder}</p>
+        <p className="mt-3 text-sm text-gray-300 italic">{placeholder}</p>
       ) : (
         <>
-          <p className={`mt-1 text-3xl font-bold ${color}`}>{value}</p>
+          <p className={`mt-2 text-3xl font-semibold tabular-nums tracking-tight ${accentClass || "text-gray-900"}`}>{value}</p>
           {delta !== undefined && (
-            <div className="mt-1">
+            <div className="mt-2">
               <DeltaBadge delta={delta} invert={invertDelta} />
             </div>
           )}
           {subtitle && (
-            <p className="mt-1 text-xs text-gray-400">{subtitle}</p>
+            <p className="mt-1.5 text-xs text-gray-400">{subtitle}</p>
           )}
         </>
       )}
@@ -90,8 +89,9 @@ function StageDistributionBar({
   if (total === 0) return null;
 
   return (
-    <div className="mt-4">
-      <div className="flex h-6 w-full overflow-hidden rounded-md">
+    <div className="mt-6 rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
+      <p className="text-[13px] font-medium text-gray-400 tracking-wide mb-3">Pipeline Distribution</p>
+      <div className="flex h-3 w-full overflow-hidden rounded-full gap-0.5">
         {stages
           .filter((s) => s.count > 0)
           .map((s) => {
@@ -100,27 +100,23 @@ function StageDistributionBar({
             return (
               <div
                 key={s.stageName}
-                className="relative group"
+                className="rounded-full transition-all duration-300"
                 style={{ width: `${pct}%`, backgroundColor: bg }}
                 title={`${s.stageName}: ${s.count}`}
-              >
-                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-gray-800 opacity-0 group-hover:opacity-100 truncate px-1">
-                  {s.stageName}
-                </span>
-              </div>
+              />
             );
           })}
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
         {stages
           .filter((s) => s.count > 0)
           .map((s) => (
-            <span key={s.stageName} className="flex items-center gap-1 text-[11px] text-gray-500">
+            <span key={s.stageName} className="flex items-center gap-1.5 text-xs text-gray-500">
               <span
                 className="inline-block h-2 w-2 rounded-full"
                 style={{ backgroundColor: STAGE_COLORS[s.stageName] ?? "#d1d5db" }}
               />
-              {s.stageName} ({s.count})
+              {s.stageName} <span className="text-gray-400">({s.count})</span>
             </span>
           ))}
       </div>
@@ -137,7 +133,7 @@ function formatHours(hours: number | null): string {
 function flowEffColor(eff: number | null): string {
   if (eff === null) return "text-gray-900";
   if (eff >= 70) return "text-green-600";
-  if (eff >= 50) return "text-amber-500";
+  if (eff >= 50) return "text-amber-600";
   return "text-red-600";
 }
 
@@ -145,34 +141,32 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
   const hasFlow = flowMetrics !== null;
   const hasWeekly = teamSummary !== null;
 
-  // No data at all
   if (!hasFlow && !hasWeekly) {
     return (
       <section>
-        <h2 className="mb-3 text-lg font-semibold text-gray-800">Agency Overview</h2>
-        <div className="rounded-lg bg-white p-8 shadow-sm border border-gray-100 text-center text-gray-400">
-          No data yet &mdash; click Sync Now
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-gray-900">Agency Overview</h2>
+        <div className="rounded-xl bg-surface-raised p-10 shadow-[var(--shadow-card)] border border-gray-100/80 text-center">
+          <p className="text-gray-400">No data yet. Click Sync Now to pull metrics.</p>
         </div>
       </section>
     );
   }
 
-  // Both sources available
   if (hasFlow && hasWeekly) {
     return (
       <section>
-        <h2 className="mb-3 text-lg font-semibold text-gray-800">Agency Overview</h2>
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-gray-900">Agency Overview</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MetricCard
             label="WIP"
             value={flowMetrics.wip}
-            color="text-blue-600"
+            accentClass="text-brand-600"
             subtitle="Active tasks in pipeline"
           />
           <MetricCard
             label="Throughput"
             value={teamSummary.tasksCompleted}
-            color="text-green-600"
+            accentClass="text-green-600"
             delta={teamSummary.tasksCompletedDelta}
             subtitle={
               teamSummary.tasksCompletedAvg4w !== null
@@ -183,19 +177,19 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
           <MetricCard
             label="Cycle Time (p85)"
             value={formatHours(flowMetrics.cycleTimeP85Hours)}
-            color="text-violet-600"
+            accentClass="text-violet-600"
             subtitle={`Median: ${formatHours(flowMetrics.cycleTimeP50Hours)}`}
           />
           <MetricCard
             label="Aging Items"
             value={flowMetrics.agingItems}
-            color={flowMetrics.agingItems > 0 ? "text-red-600" : "text-gray-900"}
+            accentClass={flowMetrics.agingItems > 0 ? "text-red-600" : "text-gray-900"}
             subtitle="Tasks > 5 days in stage"
           />
           <MetricCard
             label="Returns"
             value={teamSummary.returnForReviewCount}
-            color={teamSummary.returnForReviewCount > 0 ? "text-red-600" : "text-gray-900"}
+            accentClass={teamSummary.returnForReviewCount > 0 ? "text-red-600" : "text-gray-900"}
             delta={teamSummary.returnForReviewDelta}
             invertDelta
             subtitle={
@@ -211,7 +205,7 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
                 ? `${Math.round(flowMetrics.flowEfficiency)}%`
                 : "\u2014"
             }
-            color={flowEffColor(flowMetrics.flowEfficiency)}
+            accentClass={flowEffColor(flowMetrics.flowEfficiency)}
             subtitle="Active vs total time"
           />
         </div>
@@ -219,8 +213,8 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
         <StageDistributionBar stages={flowMetrics.stageDistribution} />
 
         {flowMetrics.bottleneckStage && (
-          <p className="mt-2 text-xs text-gray-500">
-            Bottleneck: {flowMetrics.bottleneckStage.name} (avg{" "}
+          <p className="mt-3 text-xs text-gray-400">
+            Bottleneck: <span className="font-medium text-gray-600">{flowMetrics.bottleneckStage.name}</span> (avg{" "}
             {Math.round(flowMetrics.bottleneckStage.avgDwellHours)}h dwell)
           </p>
         )}
@@ -228,16 +222,15 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
     );
   }
 
-  // Only weekly available
   if (hasWeekly) {
     return (
       <section>
-        <h2 className="mb-3 text-lg font-semibold text-gray-800">Agency Overview</h2>
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-gray-900">Agency Overview</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MetricCard
             label="Tasks Completed"
             value={teamSummary.tasksCompleted}
-            color="text-green-600"
+            accentClass="text-green-600"
             delta={teamSummary.tasksCompletedDelta}
             subtitle={
               teamSummary.tasksCompletedAvg4w !== null
@@ -253,7 +246,7 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
           <MetricCard
             label="Returns"
             value={teamSummary.returnForReviewCount}
-            color={teamSummary.returnForReviewCount > 0 ? "text-red-600" : "text-gray-900"}
+            accentClass={teamSummary.returnForReviewCount > 0 ? "text-red-600" : "text-gray-900"}
             delta={teamSummary.returnForReviewDelta}
             invertDelta
             subtitle={
@@ -270,33 +263,32 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
     );
   }
 
-  // Only flow available
   return (
     <section>
-      <h2 className="mb-3 text-lg font-semibold text-gray-800">Agency Overview</h2>
+      <h2 className="mb-4 text-lg font-semibold tracking-tight text-gray-900">Agency Overview</h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard
           label="WIP"
           value={flowMetrics!.wip}
-          color="text-blue-600"
+          accentClass="text-brand-600"
           subtitle="Active tasks in pipeline"
         />
         <MetricCard
           label="Throughput"
           value={flowMetrics!.throughput}
-          color="text-green-600"
+          accentClass="text-green-600"
           subtitle="Completed this week"
         />
         <MetricCard
           label="Cycle Time (p85)"
           value={formatHours(flowMetrics!.cycleTimeP85Hours)}
-          color="text-violet-600"
+          accentClass="text-violet-600"
           subtitle={`Median: ${formatHours(flowMetrics!.cycleTimeP50Hours)}`}
         />
         <MetricCard
           label="Aging Items"
           value={flowMetrics!.agingItems}
-          color={flowMetrics!.agingItems > 0 ? "text-red-600" : "text-gray-900"}
+          accentClass={flowMetrics!.agingItems > 0 ? "text-red-600" : "text-gray-900"}
           subtitle="Tasks > 5 days in stage"
         />
         <MetricCard
@@ -306,7 +298,7 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
               ? `${Math.round(flowMetrics!.flowEfficiency)}%`
               : "\u2014"
           }
-          color={flowEffColor(flowMetrics!.flowEfficiency)}
+          accentClass={flowEffColor(flowMetrics!.flowEfficiency)}
           subtitle="Active vs total time"
         />
         <MetricCard label="Returns" placeholder="No weekly data" />
@@ -315,8 +307,8 @@ export function AgencyOverview({ flowMetrics, teamSummary }: AgencyOverviewProps
       <StageDistributionBar stages={flowMetrics!.stageDistribution} />
 
       {flowMetrics!.bottleneckStage && (
-        <p className="mt-2 text-xs text-gray-500">
-          Bottleneck: {flowMetrics!.bottleneckStage.name} (avg{" "}
+        <p className="mt-3 text-xs text-gray-400">
+          Bottleneck: <span className="font-medium text-gray-600">{flowMetrics!.bottleneckStage.name}</span> (avg{" "}
           {Math.round(flowMetrics!.bottleneckStage.avgDwellHours)}h dwell)
         </p>
       )}
