@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import type {
   DashboardApiResponse,
   FlowApiResponse,
@@ -16,65 +15,19 @@ import { TicketFlowTable } from "@/components/TicketFlowTable";
 import TeamMemberCard from "@/components/TeamMemberCard";
 import { AttentionItems } from "@/components/AttentionItems";
 
-const validClientNames = new Set(config.clients.map((c) => c.name));
-
 export default function DashboardPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  // Read filters from URL
-  const clientParam = searchParams.get("client") ?? "";
-  const weekParam = searchParams.get("week") ?? "current";
-
-  // Validate client param
-  const selectedClient = validClientNames.has(clientParam) ? clientParam : "";
-
-  // Strip invalid client param from URL
-  useEffect(() => {
-    if (clientParam && !validClientNames.has(clientParam)) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("client");
-      const qs = params.toString();
-      router.replace(qs ? `/?${qs}` : "/");
-    }
-  }, [clientParam, searchParams, router]);
-
   const [weeklyData, setWeeklyData] = useState<DashboardApiResponse | null>(null);
   const [flowData, setFlowData] = useState<FlowSnapshot | null>(null);
+  const [week, setWeek] = useState("current");
+  const [selectedClient, setSelectedClient] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
 
-  // URL update helpers
-  const updateParams = useCallback(
-    (updates: Record<string, string | null>) => {
-      const params = new URLSearchParams(searchParams.toString());
-      for (const [key, value] of Object.entries(updates)) {
-        if (value === null || value === "") {
-          params.delete(key);
-        } else {
-          params.set(key, value);
-        }
-      }
-      const qs = params.toString();
-      router.replace(qs ? `/?${qs}` : "/");
-    },
-    [searchParams, router],
-  );
-
-  function handleWeekChange(w: string) {
-    updateParams({ week: w === "current" ? null : w });
-  }
-
-  function handleClientSelect(name: string) {
-    updateParams({ client: name || null });
-  }
-
-  // Fetch data when week changes
   useEffect(() => {
-    fetchData(weekParam);
-  }, [weekParam]);
+    fetchData(week);
+  }, [week]);
 
   async function fetchData(w: string) {
     setLoading(true);
@@ -95,10 +48,7 @@ export default function DashboardPage() {
     if (weeklyRes.status === "fulfilled" && weeklyRes.value.ok) {
       weekly = await weeklyRes.value.json();
       setWeeklyData(weekly);
-      // Update URL with resolved week (e.g., "current" → "2026-W14")
-      if (weekly?.current && w === "current") {
-        updateParams({ week: weekly.current.week });
-      }
+      if (weekly?.current && w === "current") setWeek(weekly.current.week);
     }
 
     let flow: FlowSnapshot | null = null;
@@ -106,9 +56,7 @@ export default function DashboardPage() {
       const flowJson: FlowApiResponse = await flowRes.value.json();
       flow = flowJson.data;
       setFlowData(flow);
-      if (flow && !weekly?.current && w === "current") {
-        updateParams({ week: flow.week });
-      }
+      if (flow && !weekly?.current && w === "current") setWeek(flow.week);
     }
 
     setLoading(false);
@@ -143,11 +91,12 @@ export default function DashboardPage() {
     }
   }
 
+  function handleClientSelect(name: string) {
+    setSelectedClient(name);
+  }
+
   const snap = weeklyData?.current ?? null;
   const hasAnyData = !!snap || !!flowData;
-  const resolvedWeek = weekParam === "current"
-    ? (snap?.week ?? flowData?.week ?? "current")
-    : weekParam;
 
   // Loading skeleton
   if (loading) {
@@ -220,20 +169,16 @@ export default function DashboardPage() {
 
   // --- Filtered data based on selected client ---
 
-  // KPI metrics: use client-specific flow metrics when filtered, agency-wide otherwise
   const displayFlowMetrics = selectedClient
     ? flowData?.clientMetrics[selectedClient] ?? null
     : flowData?.agencyMetrics ?? null;
 
-  // Weekly team summary: not available per-client, pass null when filtered
   const displayTeamSummary = selectedClient ? null : snap?.teamSummary ?? null;
 
-  // Tickets for the selected client
   const filteredTickets = selectedClient
     ? flowData?.tickets.filter((t) => t.clientName === selectedClient) ?? []
     : [];
 
-  // Team members: filter to those with tickets for the selected client
   const flowEmployeeList = flowData ? Object.values(flowData.employeeMetrics) : [];
   const clientAssigneeIds = selectedClient
     ? new Set(filteredTickets.map((t) => t.assigneeContactId).filter(Boolean))
@@ -254,7 +199,7 @@ export default function DashboardPage() {
       };
     })
     .filter((card) => {
-      if (!clientAssigneeIds) return true; // no filter, show all
+      if (!clientAssigneeIds) return true;
       return clientAssigneeIds.has(card.contactId);
     });
 
@@ -286,8 +231,19 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <ClientSelector selected={selectedClient} onChange={handleClientSelect} />
-          <WeekSelector currentWeek={resolvedWeek} onWeekChange={handleWeekChange} />
+          <select
+            value={selectedClient}
+            onChange={(e) => handleClientSelect(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-surface-raised px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-colors"
+          >
+            <option value="">All Clients</option>
+            {config.clients.map((c) => (
+              <option key={c.wrikeFolderId} value={c.name}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <WeekSelector currentWeek={week} onWeekChange={setWeek} />
           <button
             onClick={triggerSync}
             disabled={syncing}
@@ -380,23 +336,5 @@ export default function DashboardPage() {
         </div>
       )}
     </main>
-  );
-}
-
-// Inline import to avoid a separate import line for this small component
-function ClientSelector({ selected, onChange }: { selected: string; onChange: (v: string) => void }) {
-  return (
-    <select
-      value={selected}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-lg border border-gray-200 bg-surface-raised px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-colors"
-    >
-      <option value="">All Clients</option>
-      {config.clients.map((c) => (
-        <option key={c.wrikeFolderId} value={c.name}>
-          {c.name}
-        </option>
-      ))}
-    </select>
   );
 }
