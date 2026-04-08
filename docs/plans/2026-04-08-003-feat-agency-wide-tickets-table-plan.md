@@ -1,7 +1,7 @@
 ---
 title: "feat: Show tickets table at agency and organisation level"
 type: feat
-status: active
+status: completed
 date: 2026-04-08
 ---
 
@@ -44,7 +44,7 @@ Users need to see all active tickets across the organisation from the Overview p
 
 ## Implementation Units
 
-- [ ] **Unit 1: Show tickets table at agency level on Overview page**
+- [x] **Unit 1: Show tickets table at agency level on Overview page**
 
 **Goal:** Make the tickets table always visible and show all tickets when no client is selected
 

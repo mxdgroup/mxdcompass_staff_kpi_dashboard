@@ -177,7 +177,7 @@ export default function DashboardPage() {
 
   const filteredTickets = selectedClient
     ? flowData?.tickets.filter((t) => t.clientName === selectedClient) ?? []
-    : [];
+    : flowData?.tickets ?? [];
 
   const flowEmployeeList = flowData ? Object.values(flowData.employeeMetrics) : [];
   const clientAssigneeIds = selectedClient
@@ -281,20 +281,22 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* Ticket table — shown when a client is selected */}
-      {selectedClient && (
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold tracking-tight text-gray-900">
-              Tickets
-            </h2>
-            <span className="text-xs text-gray-400">{filteredTickets.length} tickets</span>
-          </div>
-          <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
-            <TicketFlowTable tickets={filteredTickets} showAssignee />
-          </div>
-        </section>
-      )}
+      {/* Ticket table — always visible */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold tracking-tight text-gray-900">
+            Tickets
+          </h2>
+          <span className="text-xs text-gray-400">{filteredTickets.length} tickets</span>
+        </div>
+        <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
+          <TicketFlowTable
+            tickets={filteredTickets}
+            showAssignee
+            showClient={!selectedClient}
+          />
+        </div>
+      </section>
 
       {/* Team Members */}
       <section>
