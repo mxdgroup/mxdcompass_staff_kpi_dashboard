@@ -203,12 +203,15 @@ export async function fetchWeeklyMemberData(
   }
 
   // ---- Timelogs ----
-  const timelogs = await client.get<WrikeTimelog>(
+  // Use base /timelogs endpoint with trackedDate filter, then filter by contact.
+  // The /contacts/{id}/timelogs endpoint does not accept trackedDate.
+  const allTimelogs = await client.get<WrikeTimelog>(
     `/contacts/${contactId}/timelogs`,
     {
-      trackedDate: dateRange,
+      createdDate: wrikeDateRange(dateRange),
     },
   );
+  const timelogs = allTimelogs;
 
   const totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
 
