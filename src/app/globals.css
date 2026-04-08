@@ -19,13 +19,6 @@
   --color-warning: oklch(0.70 0.15 75);
   --color-danger: oklch(0.55 0.18 25);
 
-  /* Spacing scale (4px base) */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
-  --spacing-2xl: 48px;
 
   /* Border radius */
   --radius-sm: 6px;

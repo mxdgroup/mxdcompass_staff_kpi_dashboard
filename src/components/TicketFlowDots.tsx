@@ -91,6 +91,13 @@ export function TicketFlowDots({
     return true;
   });
 
+  const stagesWithData = new Set<string>();
+  for (const t of filtered) {
+    for (const sd of t.stageDurations) {
+      stagesWithData.add(sd.stageName);
+    }
+  }
+
   const sorted = [...filtered].sort((a, b) => {
     let cmp = 0;
     switch (sortKey) {
@@ -183,14 +190,21 @@ export function TicketFlowDots({
                 </th>
               )}
               <SortHeader label="Effort" k="effort" />
-              {STAGES.map((stage) => (
-                <th
-                  key={stage}
-                  className="px-2 py-2 text-center text-xs font-medium text-gray-500 min-w-[56px]"
-                >
-                  {stage}
-                </th>
-              ))}
+              {STAGES.map((stage) => {
+                const hasData = stagesWithData.has(stage);
+                return (
+                  <th
+                    key={stage}
+                    className={`px-2 py-2 text-center text-xs font-medium whitespace-nowrap ${
+                      hasData
+                        ? "text-gray-500 min-w-[56px]"
+                        : "text-gray-300 min-w-[36px]"
+                    }`}
+                  >
+                    {stage}
+                  </th>
+                );
+              })}
               <SortHeader label="Cycle" k="cycleTime" />
             </tr>
           </thead>

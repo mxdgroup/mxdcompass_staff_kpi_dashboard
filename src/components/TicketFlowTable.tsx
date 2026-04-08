@@ -79,6 +79,14 @@ export function TicketFlowTable({
     return true;
   });
 
+  // Track which stages have data in the visible set
+  const stagesWithData = new Set<string>();
+  for (const t of filtered) {
+    for (const sd of t.stageDurations) {
+      stagesWithData.add(sd.stageName);
+    }
+  }
+
   const sorted = [...filtered].sort((a, b) => {
     let cmp = 0;
     switch (sortKey) {
@@ -157,14 +165,21 @@ export function TicketFlowTable({
                 </th>
               )}
               <SortHeader label="Effort" k="effort" />
-              {STAGES.map((stage) => (
-                <th
-                  key={stage}
-                  className="px-2 py-2 text-center text-xs font-medium text-gray-500 min-w-[90px]"
-                >
-                  {stage}
-                </th>
-              ))}
+              {STAGES.map((stage) => {
+                const hasData = stagesWithData.has(stage);
+                return (
+                  <th
+                    key={stage}
+                    className={`px-2 py-2 text-center text-xs font-medium whitespace-nowrap ${
+                      hasData
+                        ? "text-gray-500 min-w-[100px]"
+                        : "text-gray-300 min-w-[48px]"
+                    }`}
+                  >
+                    {stage}
+                  </th>
+                );
+              })}
               <SortHeader label="Cycle" k="cycleTime" />
             </tr>
           </thead>

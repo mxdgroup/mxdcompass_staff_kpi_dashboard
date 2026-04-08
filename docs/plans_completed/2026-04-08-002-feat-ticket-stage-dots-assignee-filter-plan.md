@@ -1,7 +1,7 @@
 ---
 title: "feat: Ticket Flow dot view with assignee filter alongside existing Tickets table"
 type: feat
-status: active
+status: completed
 date: 2026-04-08
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "refactor: Plan lifecycle management for multi-developer coordination"
 type: refactor
-status: active
+status: completed
 date: 2026-04-08
 ---
 
