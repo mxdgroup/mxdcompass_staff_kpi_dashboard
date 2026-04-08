@@ -1,7 +1,7 @@
 ---
 title: "feat: Rebuild Yesterday activity tab with design system"
 type: feat
-status: active
+status: completed
 date: 2026-04-08
 ---
 
