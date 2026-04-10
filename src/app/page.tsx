@@ -39,11 +39,6 @@ export default function DashboardPage() {
       fetch(`/kpi/api/flow${param}`),
     ]);
 
-    if (weeklyRes.status === "fulfilled" && weeklyRes.value.status === 401) {
-      window.location.href = "/kpi/login";
-      return;
-    }
-
     let weekly: DashboardApiResponse | null = null;
     if (weeklyRes.status === "fulfilled" && weeklyRes.value.ok) {
       weekly = await weeklyRes.value.json();

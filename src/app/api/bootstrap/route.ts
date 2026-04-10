@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
 import { discoverWrikeConfig } from "@/lib/bootstrap";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
@@ -10,11 +9,6 @@ import { getCurrentWeek } from "@/lib/week";
 export const maxDuration = 300;
 
 export async function POST() {
-  const authed = await isAuthenticated();
-  if (!authed) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const startTime = Date.now();
 
   const acquired = await acquireSyncGuard();
