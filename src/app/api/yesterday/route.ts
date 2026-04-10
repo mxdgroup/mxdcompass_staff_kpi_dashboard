@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { getTransitionsInRange } from "@/lib/wrike/transitions";
 import { resolveWorkflowStatuses } from "@/lib/wrike/fetcher";
 import { getFlowLatestWeek, getFlowSnapshot } from "@/lib/flowStorage";
+import { getWrikeClient } from "@/lib/wrike/client";
+import type { WrikeTask } from "@/lib/wrike/types";
 import { config, getMemberByContactId } from "@/lib/config";
 import type { Role } from "@/lib/config";
 
@@ -87,6 +89,32 @@ export async function GET() {
     }
   } catch {
     // Titles fall back to "Task {id}"
+  }
+
+  // Fetch titles from Wrike for any tasks not in the flow snapshot
+  const missingIds = [
+    ...new Set(
+      transitions
+        .map((t) => t.taskId)
+        .filter((id) => !taskTitles.has(id)),
+    ),
+  ];
+  if (missingIds.length > 0) {
+    try {
+      const client = getWrikeClient();
+      const tasks = await client.get<WrikeTask>(
+        `/tasks/${missingIds.join(",")}`,
+        { fields: '["permalink"]' },
+      );
+      for (const task of tasks) {
+        taskTitles.set(task.id, {
+          title: task.title,
+          permalink: task.permalink,
+        });
+      }
+    } catch {
+      // Fall back to "Task {id}" for these
+    }
   }
 
   // Group transitions by eventAuthorId

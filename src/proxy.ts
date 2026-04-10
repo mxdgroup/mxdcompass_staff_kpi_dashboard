@@ -1,9 +1,13 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 const ALLOWED_HOST = "compass.mxd.digital";
 
-export function middleware(request: NextRequest) {
-  const host = request.headers.get("host") ?? "";
+export default function proxy(request: NextRequest) {
+  const host = request.headers.get("host")?.split(":")[0];
+
+  // Allow in development
+  if (process.env.NODE_ENV !== "production") return NextResponse.next();
 
   if (host !== ALLOWED_HOST) {
     return new NextResponse("Not Found", { status: 404 });
@@ -11,10 +15,3 @@ export function middleware(request: NextRequest) {
 
   return NextResponse.next();
 }
-
-export const config = {
-  matcher: [
-    // Match all paths under /kpi except static assets and Next.js internals
-    "/kpi/:path*",
-  ],
-};
