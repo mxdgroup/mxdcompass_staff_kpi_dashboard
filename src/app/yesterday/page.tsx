@@ -125,7 +125,7 @@ export default function YesterdayPage() {
     async function fetchData() {
       setLoading(true);
       setError("");
-      const res = await fetch("/kpi/api/yesterday");
+      const res = await fetch("/internal/kpis/api/yesterday");
       if (!res.ok) {
         setError("Failed to load yesterday's activity");
         setLoading(false);

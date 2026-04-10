@@ -72,7 +72,7 @@ export default function FlowDetailsPage() {
     setLoading(true);
     setError("");
     const param = w === "current" ? "" : `?week=${w}`;
-    const res = await fetch(`/kpi/api/flow${param}`);
+    const res = await fetch(`/internal/kpis/api/flow${param}`);
     if (!res.ok) {
       setError("Failed to load flow data");
       setLoading(false);
@@ -88,7 +88,7 @@ export default function FlowDetailsPage() {
 
   async function triggerSync() {
     setSyncing(true);
-    const res = await fetch("/kpi/api/sync", { method: "POST" });
+    const res = await fetch("/internal/kpis/api/sync", { method: "POST" });
     setSyncing(false);
     if (res.ok) fetchData("current");
   }
