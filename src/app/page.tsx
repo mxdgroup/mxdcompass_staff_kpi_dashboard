@@ -35,8 +35,8 @@ export default function DashboardPage() {
     const param = w === "current" ? "" : `?week=${w}`;
 
     const [weeklyRes, flowRes] = await Promise.allSettled([
-      fetch(`/internal/kpis/api/dashboard${param}`),
-      fetch(`/internal/kpis/api/flow${param}`),
+      fetch(`/api/dashboard${param}`),
+      fetch(`/api/flow${param}`),
     ]);
 
     let weekly: DashboardApiResponse | null = null;
@@ -63,7 +63,7 @@ export default function DashboardPage() {
 
   async function triggerSync() {
     setSyncing(true);
-    const res = await fetch("/internal/kpis/api/sync", { method: "POST" });
+    const res = await fetch("/api/sync", { method: "POST" });
     setSyncing(false);
     if (res.ok) fetchData("current");
   }
@@ -72,7 +72,7 @@ export default function DashboardPage() {
     setBootstrapping(true);
     setError("");
     try {
-      const res = await fetch("/internal/kpis/api/bootstrap", { method: "POST" });
+      const res = await fetch("/api/bootstrap", { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setError(body.error ?? "Bootstrap failed");
