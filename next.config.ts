@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  basePath: "/kpi",
+  basePath: "/internal/kpis",
 };
 
 export default nextConfig;
