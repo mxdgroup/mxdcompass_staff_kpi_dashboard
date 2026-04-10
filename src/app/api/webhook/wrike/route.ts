@@ -28,7 +28,11 @@ export async function POST(request: Request): Promise<Response> {
   if (signature) {
     const valid = await validateSignature(rawBody, signature);
     if (!valid) {
-      console.warn("[webhook] Signature mismatch, processing anyway (secret may need rotation)");
+      console.warn("[webhook] Signature mismatch — rejecting request");
+      return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
     }
   }
 
