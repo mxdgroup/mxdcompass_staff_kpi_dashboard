@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/internal/kpis/api/cron/sync",
+      "path": "/api/cron/sync",
       "schedule": "0 4 * * *"
     }
   ]
