@@ -73,10 +73,6 @@ export default function FlowDetailsPage() {
     setError("");
     const param = w === "current" ? "" : `?week=${w}`;
     const res = await fetch(`/kpi/api/flow${param}`);
-    if (res.status === 401) {
-      window.location.href = "/kpi/login";
-      return;
-    }
     if (!res.ok) {
       setError("Failed to load flow data");
       setLoading(false);

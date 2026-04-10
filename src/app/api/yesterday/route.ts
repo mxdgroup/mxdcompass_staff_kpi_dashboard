@@ -1,6 +1,5 @@
 import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
 import { getTransitionsInRange } from "@/lib/wrike/transitions";
 import { resolveWorkflowStatuses } from "@/lib/wrike/fetcher";
 import { getFlowLatestWeek, getFlowSnapshot } from "@/lib/flowStorage";
@@ -37,10 +36,6 @@ export interface YesterdayApiResponse {
 
 export async function GET() {
   await loadOverridesFromRedis();
-  const authed = await isAuthenticated();
-  if (!authed) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   // Compute yesterday midnight-to-midnight UTC
   const now = new Date();

@@ -126,10 +126,6 @@ export default function YesterdayPage() {
       setLoading(true);
       setError("");
       const res = await fetch("/kpi/api/yesterday");
-      if (res.status === 401) {
-        window.location.href = "/kpi/login";
-        return;
-      }
       if (!res.ok) {
         setError("Failed to load yesterday's activity");
         setLoading(false);

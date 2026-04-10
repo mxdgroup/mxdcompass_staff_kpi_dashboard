@@ -1,6 +1,5 @@
 import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
@@ -10,12 +9,7 @@ import { getCurrentWeek } from "@/lib/week";
 export const maxDuration = 300;
 
 export async function POST() {
-  // Auth via session cookie (same as dashboard)
-  await loadOverridesFromRedis();  const authed = await isAuthenticated();
-  if (!authed) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+  await loadOverridesFromRedis();
   const startTime = Date.now();
 
   const acquired = await acquireSyncGuard();
