@@ -11,9 +11,14 @@ export interface CatchupResult {
   startDatesSet: number;
   dueDatesSet: number;
   errors: number;
+  deadlineReached: boolean;
+  foldersProcessed: number;
+  foldersTotal: number;
 }
 
-export async function catchUpMissingDates(): Promise<CatchupResult> {
+export async function catchUpMissingDates(
+  deadlineMs?: number,
+): Promise<CatchupResult> {
   const statuses = await resolveWorkflowStatuses();
   const client = getWrikeClient();
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -51,10 +56,28 @@ export async function catchUpMissingDates(): Promise<CatchupResult> {
     ...allClientPendingIds,
   ]);
 
-  const result: CatchupResult = { scanned: 0, startDatesSet: 0, dueDatesSet: 0, errors: 0 };
+  const result: CatchupResult = {
+    scanned: 0,
+    startDatesSet: 0,
+    dueDatesSet: 0,
+    errors: 0,
+    deadlineReached: false,
+    foldersProcessed: 0,
+    foldersTotal: config.wrikeFolderIds.length,
+  };
 
   // Fetch tasks from all configured client folders
   for (const folderId of config.wrikeFolderIds) {
+    // Soft deadline: bail before starting the next folder if we're out of time.
+    // Work completed so far is idempotent — the next cron run picks up the rest.
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+      result.deadlineReached = true;
+      console.warn(
+        `[dateCatchup] deadline reached before folder ${folderId} after processing ${result.foldersProcessed} of ${result.foldersTotal} folders`,
+      );
+      break;
+    }
+
     let tasks: WrikeTask[];
     try {
       tasks = await client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
@@ -64,6 +87,7 @@ export async function catchUpMissingDates(): Promise<CatchupResult> {
     } catch (err) {
       console.error(`[dateCatchup] Failed to fetch tasks for folder ${folderId}:`, err);
       result.errors++;
+      result.foldersProcessed++;
       continue;
     }
 
@@ -103,10 +127,11 @@ export async function catchUpMissingDates(): Promise<CatchupResult> {
         result.errors++;
       }
     }
+    result.foldersProcessed++;
   }
 
   console.log(
-    `[dateCatchup] Done: scanned=${result.scanned}, startDatesSet=${result.startDatesSet}, dueDatesSet=${result.dueDatesSet}, errors=${result.errors}`,
+    `[dateCatchup] Done: scanned=${result.scanned}, startDatesSet=${result.startDatesSet}, dueDatesSet=${result.dueDatesSet}, errors=${result.errors}, folders=${result.foldersProcessed}/${result.foldersTotal}${result.deadlineReached ? " (deadline hit)" : ""}`,
   );
   return result;
 }

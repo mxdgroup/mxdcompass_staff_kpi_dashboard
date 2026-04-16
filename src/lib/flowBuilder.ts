@@ -457,44 +457,48 @@ export async function buildFlowSnapshot(
     webhookByTask.set(t.taskId, arr);
   }
 
-  // Fetch tasks from each client folder
-  const allTickets: TicketFlowEntry[] = [];
+  // Fetch tasks from each client folder in parallel. Shared throttle chain
+  // serializes requests; parallelism overlaps network round-trips.
   const folderErrors: string[] = [];
+  const clientResults = await Promise.all(
+    config.clients.map(async (client) => {
+      try {
+        const data = await fetchClientTasks(client.wrikeFolderId, {
+          start: weekStart,
+          end: weekEnd,
+        });
+        return { client, data, error: null as string | null };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[flow] Failed to fetch tasks for ${client.name} (folder ${client.wrikeFolderId}): ${msg}`);
+        return { client, data: null, error: `${client.name}: ${msg}` };
+      }
+    }),
+  );
 
-  for (const client of config.clients) {
-    let data;
-    try {
-      data = await fetchClientTasks(client.wrikeFolderId, {
-        start: weekStart,
-        end: weekEnd,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[flow] Failed to fetch tasks for ${client.name} (folder ${client.wrikeFolderId}): ${msg}`);
-      folderErrors.push(`${client.name}: ${msg}`);
+  const allTickets: TicketFlowEntry[] = [];
+  for (const { client, data, error } of clientResults) {
+    if (error) {
+      folderErrors.push(error);
       continue;
     }
+    if (!data) continue;
 
     for (const task of data.tasks) {
-      // Get comment-derived transitions
       const taskComments = data.comments.get(task.id) ?? [];
       const commentTransitions = parseStatusChangesFromComments(
         taskComments,
         statuses.allStatuses,
       );
 
-      // Get webhook transitions for this task
       const taskWebhook = webhookByTask.get(task.id) ?? [];
 
-      // Merge both sources
       const transitions = mergeTransitions(
         taskWebhook,
         commentTransitions,
         statuses,
       );
 
-      // If no transitions found but task has a known status, create a synthetic
-      // entry so stale tickets appear in the CFD and have non-zero stage age
       if (transitions.length === 0 && task.customStatusId) {
         const statusName = resolveStatusName(task.customStatusId, statuses);
         if (statusName !== "Unknown") {

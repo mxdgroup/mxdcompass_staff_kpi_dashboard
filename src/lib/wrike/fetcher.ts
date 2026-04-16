@@ -8,8 +8,23 @@ import type {
   WrikeWorkflow,
   WrikeCustomStatus,
 } from "./types";
-import { config } from "../config";
+import { config, COMPLETED_TASK_CUTOFF_DAYS } from "../config";
 import { getCachedWorkflowStatuses, setCachedWorkflowStatuses } from "../storage";
+
+// ---------------------------------------------------------------------------
+// 90-day completed cutoff
+//
+// Completed tasks whose completedDate is older than COMPLETED_TASK_CUTOFF_DAYS
+// are dropped at fetch time — they're not synced, stored, or shown. Active
+// (non-completed) tasks are NEVER filtered by age.
+// ---------------------------------------------------------------------------
+
+function isCompletedBeyondCutoff(task: WrikeTask): boolean {
+  if (task.status !== "Completed") return false;
+  if (!task.completedDate) return false;
+  const ageMs = Date.now() - new Date(task.completedDate).getTime();
+  return ageMs > COMPLETED_TASK_CUTOFF_DAYS * 24 * 60 * 60 * 1000;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,6 +183,45 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
 }
 
 // ---------------------------------------------------------------------------
+// Per-sync folder comment cache
+//
+// Both fetchWeeklyMemberData (per-member) and fetchClientTasks (per-client
+// in the flow build) call `/folders/{id}/comments` with the same folderId.
+// Across a full sync this hits Wrike ~16 times for the same 4 folders.
+// This cache is scoped to a single sync — init at the top of runSync,
+// clear in the finally. No TTL, no cross-sync reuse.
+// ---------------------------------------------------------------------------
+
+let _folderCommentCache: Map<string, Promise<WrikeComment[]>> | null = null;
+
+export function initFolderCommentCache(): void {
+  _folderCommentCache = new Map();
+}
+
+export function clearFolderCommentCache(): void {
+  _folderCommentCache = null;
+}
+
+async function getFolderComments(folderId: string): Promise<WrikeComment[]> {
+  const client = getWrikeClient();
+  if (_folderCommentCache) {
+    const existing = _folderCommentCache.get(folderId);
+    if (existing) return existing;
+    const pending = client.get<WrikeComment>(`/folders/${folderId}/comments`);
+    // Evict rejected entries so a transient Wrike error doesn't poison every
+    // subsequent member/client that shares the folder in this sync.
+    pending.catch(() => {
+      if (_folderCommentCache?.get(folderId) === pending) {
+        _folderCommentCache.delete(folderId);
+      }
+    });
+    _folderCommentCache.set(folderId, pending);
+    return pending;
+  }
+  return client.get<WrikeComment>(`/folders/${folderId}/comments`);
+}
+
+// ---------------------------------------------------------------------------
 // Date formatting helper — Wrike API requires ISO 8601 with timezone
 // ---------------------------------------------------------------------------
 
@@ -212,18 +266,20 @@ export async function fetchWeeklyMemberData(
       descendants: true,
     });
 
-    // Filter to tasks this member is responsible for
-    const memberTasks = tasks.filter((t) =>
-      t.responsibleIds?.includes(contactId),
+    // Filter to tasks this member is responsible for, and drop completed
+    // tasks older than the 90-day cutoff before any per-task comment work.
+    const memberTasks = tasks.filter(
+      (t) =>
+        t.responsibleIds?.includes(contactId) &&
+        !isCompletedBeyondCutoff(t),
     );
     allTasks.push(...memberTasks);
 
     // ---- Comments (folder-level) ----
     // Wrike comments endpoint does NOT support updatedDate filter — fetch all
-    // and filter in code below
-    const folderComments = await client.get<WrikeComment>(
-      `/folders/${folderId}/comments`,
-    );
+    // and filter in code below. Uses per-sync folder cache to dedupe across
+    // members/flow.
+    const folderComments = await getFolderComments(folderId);
 
     // Build a set of member task IDs for quick lookup
     const memberTaskIds = new Set(memberTasks.map((t) => t.id));
@@ -240,9 +296,12 @@ export async function fetchWeeklyMemberData(
     }
 
     // Fallback: for member tasks that had no folder-level comments mapped,
-    // fetch per-task comments (the folder endpoint may omit taskId in some cases)
+    // fetch per-task comments (the folder endpoint may omit taskId in some cases).
+    // Active tasks are fetched before Completed so an interrupted loop still
+    // covers the most-relevant work (R5: active-first).
     const unmappedTaskIds = memberTasks
       .filter((t) => !mappedTaskIds.has(t.id))
+      .sort((a, b) => (a.status === "Completed" ? 1 : 0) - (b.status === "Completed" ? 1 : 0))
       .map((t) => t.id);
 
     for (const taskId of unmappedTaskIds) {
@@ -330,7 +389,10 @@ export async function fetchClientTasks(
   for (const t of activeTasks) {
     if (!taskMap.has(t.id)) taskMap.set(t.id, t);
   }
-  const tasks = Array.from(taskMap.values());
+  // Drop completed tasks older than the 90-day cutoff before fetching comments.
+  const tasks = Array.from(taskMap.values()).filter(
+    (t) => !isCompletedBeyondCutoff(t),
+  );
 
   // Fetch comments for all tasks
   const commentsByTask = new Map<string, WrikeComment[]>();
@@ -348,10 +410,8 @@ export async function fetchClientTasks(
   };
 
   // Wrike comments endpoint does NOT support updatedDate — fetch all and
-  // filter in code by the extended lookback window
-  const allFolderComments = await client.get<WrikeComment>(
-    `/folders/${folderId}/comments`,
-  );
+  // filter in code by the extended lookback window. Uses per-sync folder cache.
+  const allFolderComments = await getFolderComments(folderId);
   const commentCutoff = new Date(commentDateRange.start).getTime();
   const folderComments = allFolderComments.filter((c) => {
     const ts = new Date(c.createdDate ?? "").getTime();
@@ -370,8 +430,11 @@ export async function fetchClientTasks(
     }
   }
 
-  // Fallback per-task comment fetch for unmapped tasks (same extended lookback)
-  const unmapped = tasks.filter((t) => !mappedTaskIds.has(t.id));
+  // Fallback per-task comment fetch for unmapped tasks (same extended lookback).
+  // Active tasks first so an interrupted loop still covers the most-relevant work.
+  const unmapped = tasks
+    .filter((t) => !mappedTaskIds.has(t.id))
+    .sort((a, b) => (a.status === "Completed" ? 1 : 0) - (b.status === "Completed" ? 1 : 0));
   for (const task of unmapped) {
     // Wrike comments endpoint does NOT support updatedDate — fetch all, filter in code
     const allTaskComments = await client.get<WrikeComment>(
