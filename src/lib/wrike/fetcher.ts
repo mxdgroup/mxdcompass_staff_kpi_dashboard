@@ -219,10 +219,10 @@ export async function fetchWeeklyMemberData(
     allTasks.push(...memberTasks);
 
     // ---- Comments (folder-level) ----
-    // P16: Add date filter to prevent unbounded comment fetching
+    // Wrike comments endpoint does NOT support updatedDate filter — fetch all
+    // and filter in code below
     const folderComments = await client.get<WrikeComment>(
       `/folders/${folderId}/comments`,
-      { updatedDate: wrikeDateRange(dateRange) },
     );
 
     // Build a set of member task IDs for quick lookup
@@ -246,10 +246,9 @@ export async function fetchWeeklyMemberData(
       .map((t) => t.id);
 
     for (const taskId of unmappedTaskIds) {
-      // P16: Date-filter per-task comments too
+      // Wrike comments endpoint does NOT support updatedDate — fetch all
       const taskComments = await client.get<WrikeComment>(
         `/tasks/${taskId}/comments`,
-        { updatedDate: wrikeDateRange(dateRange) },
       );
       if (taskComments.length > 0) {
         commentsByTask.set(taskId, taskComments);
@@ -348,10 +347,16 @@ export async function fetchClientTasks(
     end: dateRange.end,
   };
 
-  const folderComments = await client.get<WrikeComment>(
+  // Wrike comments endpoint does NOT support updatedDate — fetch all and
+  // filter in code by the extended lookback window
+  const allFolderComments = await client.get<WrikeComment>(
     `/folders/${folderId}/comments`,
-    { updatedDate: wrikeDateRange(commentDateRange) },
   );
+  const commentCutoff = new Date(commentDateRange.start).getTime();
+  const folderComments = allFolderComments.filter((c) => {
+    const ts = new Date(c.createdDate ?? "").getTime();
+    return ts >= commentCutoff;
+  });
 
   const taskIds = new Set(tasks.map((t) => t.id));
   const mappedTaskIds = new Set<string>();
@@ -368,10 +373,14 @@ export async function fetchClientTasks(
   // Fallback per-task comment fetch for unmapped tasks (same extended lookback)
   const unmapped = tasks.filter((t) => !mappedTaskIds.has(t.id));
   for (const task of unmapped) {
-    const taskComments = await client.get<WrikeComment>(
+    // Wrike comments endpoint does NOT support updatedDate — fetch all, filter in code
+    const allTaskComments = await client.get<WrikeComment>(
       `/tasks/${task.id}/comments`,
-      { updatedDate: wrikeDateRange(commentDateRange) },
     );
+    const taskComments = allTaskComments.filter((c) => {
+      const ts = new Date(c.createdDate ?? "").getTime();
+      return ts >= commentCutoff;
+    });
     if (taskComments.length > 0) {
       commentsByTask.set(task.id, taskComments);
     }
