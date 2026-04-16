@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { EmployeeFlowMetrics, EmployeeWeekData } from "@/lib/types";
 import type { Role } from "@/lib/config";
+import { isArchived } from "@/lib/archive";
+import { computeEmployeeFlowMetrics } from "@/lib/flowMetrics";
 import { TicketFlowTable } from "@/components/TicketFlowTable";
 
 interface TeamMemberCardProps {
@@ -11,6 +13,9 @@ interface TeamMemberCardProps {
   hasContactId: boolean;
   flowData: EmployeeFlowMetrics | null;
   weeklyData: EmployeeWeekData | null;
+  showArchived: boolean;
+  weekStart: string;
+  weekEnd: string;
 }
 
 const ROLE_BADGE: Record<Role, { bg: string; text: string; label: string }> = {
@@ -30,11 +35,34 @@ export default function TeamMemberCard({
   hasContactId,
   flowData,
   weeklyData,
+  showArchived,
+  weekStart,
+  weekEnd,
 }: TeamMemberCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const badge = ROLE_BADGE[role];
   const github = weeklyData?.github ?? null;
+
+  const visibleTickets = useMemo(() => {
+    const all = flowData?.tickets ?? [];
+    return showArchived ? all : all.filter((t) => !isArchived(t));
+  }, [flowData?.tickets, showArchived]);
+
+  // When the toggle is OFF, recompute the per-employee summary from the
+  // filtered ticket set so cycle time and flow efficiency in the collapsed
+  // header reflect what the user actually sees in the expanded table. When
+  // ON, use the server-computed metrics directly (parity with `main`).
+  const summary = useMemo(() => {
+    if (!flowData) return null;
+    if (showArchived) return flowData;
+    return computeEmployeeFlowMetrics(visibleTickets, weekStart, weekEnd);
+  }, [flowData, showArchived, visibleTickets, weekStart, weekEnd]);
+
+  const totalTicketCount = flowData?.tickets.length ?? 0;
+  const visibleTicketCount = visibleTickets.length;
+  const allTicketsArchived =
+    !showArchived && totalTicketCount > 0 && visibleTicketCount === 0;
 
   if (!hasContactId) {
     return (
@@ -80,14 +108,14 @@ export default function TeamMemberCard({
               )}
             </span>
           )}
-          {flowData?.cycleTimeP85Hours != null && (
+          {summary?.cycleTimeP85Hours != null && (
             <span title="P85 cycle time" className="text-xs">
-              <span className="tabular-nums">{fmt(flowData.cycleTimeP85Hours, "h")}</span> cycle
+              <span className="tabular-nums">{fmt(summary.cycleTimeP85Hours, "h")}</span> cycle
             </span>
           )}
-          {flowData?.flowEfficiency != null && (
+          {summary?.flowEfficiency != null && (
             <span title="Flow efficiency" className="text-xs">
-              <span className="tabular-nums">{fmt(flowData.flowEfficiency * 100, "%")}</span> eff
+              <span className="tabular-nums">{fmt(summary.flowEfficiency * 100, "%")}</span> eff
             </span>
           )}
           {role === "developer" && github != null && (
@@ -101,8 +129,13 @@ export default function TeamMemberCard({
 
       {expanded && (
         <div className="px-5 pb-5 space-y-3 border-t border-gray-50 pt-4">
-          {flowData?.tickets && flowData.tickets.length > 0 && (
-            <TicketFlowTable tickets={flowData.tickets} showClient />
+          {allTicketsArchived && (
+            <p className="text-xs text-gray-400">
+              All {totalTicketCount} {totalTicketCount === 1 ? "ticket is" : "tickets are"} archived — toggle &ldquo;Show archived&rdquo; to view.
+            </p>
+          )}
+          {visibleTickets.length > 0 && (
+            <TicketFlowTable tickets={visibleTickets} showClient />
           )}
 
           {role === "developer" && github && (

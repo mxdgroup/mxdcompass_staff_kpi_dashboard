@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   DashboardApiResponse,
   FlowApiResponse,
+  FlowMetrics,
   FlowSnapshot,
 } from "@/lib/types";
 import { config } from "@/lib/config";
+import { isArchived } from "@/lib/archive";
+import { computeFlowMetrics } from "@/lib/flowMetrics";
+import { getWeekRange } from "@/lib/week";
 import { NavTabs } from "@/components/NavTabs";
 import { WeekSelector } from "@/components/WeekSelector";
 import { AgencyOverview } from "@/components/AgencyOverview";
@@ -14,12 +18,14 @@ import { ClientChips } from "@/components/ClientChips";
 import { TicketFlowTable } from "@/components/TicketFlowTable";
 import TeamMemberCard from "@/components/TeamMemberCard";
 import { AttentionItems } from "@/components/AttentionItems";
+import { ArchivedToggle } from "@/components/ArchivedToggle";
 
 export default function DashboardPage() {
   const [weeklyData, setWeeklyData] = useState<DashboardApiResponse | null>(null);
   const [flowData, setFlowData] = useState<FlowSnapshot | null>(null);
   const [week, setWeek] = useState("current");
   const [selectedClient, setSelectedClient] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -192,21 +198,64 @@ export default function DashboardPage() {
     );
   }
 
-  // --- Filtered data based on selected client ---
+  // --- Filtered data based on selected client + archive toggle ---
 
-  const displayFlowMetrics = selectedClient
-    ? flowData?.clientMetrics[selectedClient] ?? null
-    : flowData?.agencyMetrics ?? null;
+  const weekRange = useMemo(
+    () => (flowData ? getWeekRange(flowData.week) : null),
+    [flowData],
+  );
+
+  const visibleTickets = useMemo(() => {
+    const all = flowData?.tickets ?? [];
+    return showArchived ? all : all.filter((t) => !isArchived(t));
+  }, [flowData?.tickets, showArchived]);
+
+  const filteredTickets = useMemo(
+    () =>
+      selectedClient
+        ? visibleTickets.filter((t) => t.clientName === selectedClient)
+        : visibleTickets,
+    [visibleTickets, selectedClient],
+  );
+
+  const displayFlowMetrics = useMemo(() => {
+    if (!flowData) return null;
+    if (showArchived) {
+      return selectedClient
+        ? flowData.clientMetrics[selectedClient] ?? flowData.agencyMetrics
+        : flowData.agencyMetrics;
+    }
+    if (!weekRange) return null;
+    return computeFlowMetrics(filteredTickets, weekRange.start, weekRange.end);
+  }, [flowData, showArchived, selectedClient, filteredTickets, weekRange]);
+
+  const displayClientMetrics = useMemo(() => {
+    if (!flowData) return undefined;
+    if (showArchived) return flowData.clientMetrics;
+    if (!weekRange) return undefined;
+    const out: Record<string, FlowMetrics> = {};
+    for (const client of config.clients) {
+      const ts = visibleTickets.filter((t) => t.clientName === client.name);
+      if (ts.length > 0) {
+        out[client.name] = computeFlowMetrics(ts, weekRange.start, weekRange.end);
+      }
+    }
+    return out;
+  }, [flowData, showArchived, visibleTickets, weekRange]);
 
   const displayTeamSummary = selectedClient ? null : snap?.teamSummary ?? null;
 
-  const filteredTickets = selectedClient
-    ? flowData?.tickets.filter((t) => t.clientName === selectedClient) ?? []
-    : flowData?.tickets ?? [];
-
   const flowEmployeeList = flowData ? Object.values(flowData.employeeMetrics) : [];
-  const clientAssigneeIds = selectedClient
-    ? new Set(filteredTickets.map((t) => t.assigneeContactId).filter(Boolean))
+  // Card-list inclusion uses the *unfiltered* ticket set so members with only
+  // archived tickets for the selected client still appear with zero counts —
+  // see Unit 3 plan section ("Card-list inclusion") for rationale.
+  const clientAssigneeIdsAll = selectedClient
+    ? new Set(
+        (flowData?.tickets ?? [])
+          .filter((t) => t.clientName === selectedClient)
+          .map((t) => t.assigneeContactId)
+          .filter(Boolean),
+      )
     : null;
 
   const teamCards = config.team
@@ -224,8 +273,8 @@ export default function DashboardPage() {
       };
     })
     .filter((card) => {
-      if (!clientAssigneeIds) return true;
-      return clientAssigneeIds.has(card.contactId);
+      if (!clientAssigneeIdsAll) return true;
+      return clientAssigneeIdsAll.has(card.contactId);
     });
 
   return (
@@ -269,6 +318,7 @@ export default function DashboardPage() {
             ))}
           </select>
           <WeekSelector currentWeek={week} onWeekChange={setWeek} />
+          <ArchivedToggle checked={showArchived} onChange={setShowArchived} />
           <button
             onClick={triggerSync}
             disabled={syncing}
@@ -308,7 +358,7 @@ export default function DashboardPage() {
           <span className="text-xs text-gray-400">{config.clients.length} clients</span>
         </div>
         <ClientChips
-          clientMetrics={flowData?.clientMetrics}
+          clientMetrics={displayClientMetrics}
           selected={selectedClient}
           onSelect={handleClientSelect}
         />
@@ -347,6 +397,9 @@ export default function DashboardPage() {
               hasContactId={card.hasContactId}
               flowData={card.flowData}
               weeklyData={card.weeklyData}
+              showArchived={showArchived}
+              weekStart={weekRange?.start ?? ""}
+              weekEnd={weekRange?.end ?? ""}
             />
           ))}
           {teamCards.length === 0 && selectedClient && (
