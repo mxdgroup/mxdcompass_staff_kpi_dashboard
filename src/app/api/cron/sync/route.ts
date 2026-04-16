@@ -2,6 +2,8 @@ import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
+import { buildFlowSnapshot } from "@/lib/flowBuilder";
+import { saveFlowSnapshot } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
@@ -33,9 +35,21 @@ export async function POST(request: Request) {
 async function runSync(): Promise<NextResponse> {
   const startTime = Date.now();
 
+  await loadOverridesFromRedis();
+
   // Acquire sync guard
   const acquired = await acquireSyncGuard();
   if (!acquired) {
+    const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
+    if (webhookUrl) {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: "KPI Sync skipped: sync guard still held (possible stuck lock)",
+        }),
+      }).catch(() => {});
+    }
     return NextResponse.json(
       { error: "Sync already in progress" },
       { status: 409 }
@@ -52,6 +66,10 @@ async function runSync(): Promise<NextResponse> {
     const snapshot = await buildWeeklySnapshot(week);
     await saveSnapshot(snapshot);
 
+    // Build flow dashboard snapshot
+    const flowSnapshot = await buildFlowSnapshot(week);
+    await saveFlowSnapshot(flowSnapshot);
+
     const duration = Math.round((Date.now() - startTime) / 1000);
 
     // Notify on errors if Slack webhook is configured
@@ -67,6 +85,7 @@ async function runSync(): Promise<NextResponse> {
       membersProcessed: snapshot.employees.length,
       memberErrors: snapshot.memberErrors.length,
       webhookStale,
+      flowTickets: flowSnapshot.tickets.length,
       summary: {
         tasksCompleted: snapshot.teamSummary.tasksCompleted,
         pipelineMovement: snapshot.teamSummary.pipelineMovement,
