@@ -1,5 +1,10 @@
 export type Role = "developer" | "designer" | "account-manager";
 
+// Completed tasks older than this are dropped at fetch time — they're not
+// synced, stored, or shown. Active (non-completed) tasks are NEVER filtered
+// by age, no matter how long they've been open.
+export const COMPLETED_TASK_CUTOFF_DAYS = 90;
+
 export interface TeamMember {
   name: string;
   role: Role;

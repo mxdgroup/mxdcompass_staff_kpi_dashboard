@@ -46,84 +46,95 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
     ).catch(() => { webhookMetricsAvailable = false; return { medianHours: null, times: [] as number[] }; }),
   ]);
 
-  // Process each team member
-  for (const member of config.team) {
-    try {
-      // Wrike data
-      const wrikeData = await fetchWeeklyMemberData(
-        config.wrikeFolderIds,
-        member.wrikeContactId,
-        dateRange
-      );
+  // Process team members in parallel. Requests still serialize through the
+  // shared WrikeClient throttle chain, but overlapping network round-trips
+  // cuts wall-clock time to ~max(member_time) instead of sum.
+  const memberResults = await Promise.all(
+    config.team.map(async (member) => {
+      try {
+        const wrikeData = await fetchWeeklyMemberData(
+          config.wrikeFolderIds,
+          member.wrikeContactId,
+          dateRange,
+        );
 
-      // Build task summaries
-      const tasks: TaskSummary[] = wrikeData.tasks.map((t) => {
-        const taskComments = wrikeData.comments.get(t.id) ?? [];
-        const isReturned = returnData.tasks.includes(t.id);
-        // P20: Per-task movement check instead of per-member
-        const moved = pipelineData.movedTaskIds.has(t.id);
+        const tasks: TaskSummary[] = wrikeData.tasks.map((t) => {
+          const taskComments = wrikeData.comments.get(t.id) ?? [];
+          const isReturned = returnData.tasks.includes(t.id);
+          const moved = pipelineData.movedTaskIds.has(t.id);
+          return {
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            customStatusId: t.customStatusId ?? "",
+            updatedDate: t.updatedDate,
+            completedDate: t.completedDate ?? null,
+            hasComments: taskComments.length > 0,
+            commentCount: taskComments.length,
+            movedThisWeek: moved,
+            returnedForReview: isReturned,
+            permalink: t.permalink ?? "",
+          };
+        });
+
+        const tasksCompleted = tasks.filter((t) => t.completedDate !== null).length;
+        const tasksActive = tasks.filter((t) => t.status.toLowerCase() !== "new").length;
+
+        let github: GitHubEmployeeData | null = null;
+        let githubError: MemberError | null = null;
+        if (member.githubUsername) {
+          try {
+            const ghData = await fetchWeeklyGitHubData(
+              member.githubUsername,
+              config.githubRepos,
+              config.githubOrg,
+              range.start,
+              range.end,
+            );
+            github = mapGitHubData(ghData, week);
+          } catch {
+            githubError = {
+              name: member.name,
+              wrikeContactId: member.wrikeContactId,
+              error: "GitHub fetch failed",
+              timestamp: new Date().toISOString(),
+            };
+          }
+        }
 
         return {
-          id: t.id,
-          title: t.title,
-          status: t.status,
-          customStatusId: t.customStatusId ?? "",
-          updatedDate: t.updatedDate,
-          completedDate: t.completedDate ?? null,
-          hasComments: taskComments.length > 0,
-          commentCount: taskComments.length,
-          movedThisWeek: moved,
-          returnedForReview: isReturned,
-          permalink: t.permalink ?? "",
+          employee: {
+            name: member.name,
+            role: member.role,
+            wrikeContactId: member.wrikeContactId,
+            tasksCompleted,
+            tasksActive,
+            tasksUpdated: tasks.length,
+            pipelineMovement: pipelineData.byMember[member.wrikeContactId] ?? 0,
+            returnForReviewCount: returnData.byMember[member.wrikeContactId] ?? 0,
+            hoursLogged: wrikeData.totalHours,
+            tasks,
+            github,
+          } as EmployeeWeekData,
+          error: githubError,
         };
-      });
-
-      const tasksCompleted = tasks.filter((t) => t.completedDate !== null).length;
-      const tasksActive = tasks.filter((t) => t.status.toLowerCase() !== "new").length;
-
-      // GitHub data (null for non-engineers)
-      let github: GitHubEmployeeData | null = null;
-      if (member.githubUsername) {
-        try {
-          const ghData = await fetchWeeklyGitHubData(
-            member.githubUsername,
-            config.githubRepos,
-            config.githubOrg,
-            range.start,
-            range.end
-          );
-          github = mapGitHubData(ghData, week);
-        } catch {
-          memberErrors.push({
+      } catch (err) {
+        return {
+          employee: null,
+          error: {
             name: member.name,
             wrikeContactId: member.wrikeContactId,
-            error: "GitHub fetch failed",
+            error: err instanceof Error ? err.message : "Unknown error",
             timestamp: new Date().toISOString(),
-          });
-        }
+          } as MemberError,
+        };
       }
+    }),
+  );
 
-      employees.push({
-        name: member.name,
-        role: member.role,
-        wrikeContactId: member.wrikeContactId,
-        tasksCompleted,
-        tasksActive,
-        tasksUpdated: tasks.length,
-        pipelineMovement: pipelineData.byMember[member.wrikeContactId] ?? 0,
-        returnForReviewCount: returnData.byMember[member.wrikeContactId] ?? 0,
-        hoursLogged: wrikeData.totalHours,
-        tasks,
-        github,
-      });
-    } catch (err) {
-      memberErrors.push({
-        name: member.name,
-        wrikeContactId: member.wrikeContactId,
-        error: err instanceof Error ? err.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
-    }
+  for (const result of memberResults) {
+    if (result.employee) employees.push(result.employee);
+    if (result.error) memberErrors.push(result.error);
   }
 
   // Build team summary

@@ -11,6 +11,7 @@ import { buildFlowSnapshot, patchFlowSnapshotForTask } from "./flowBuilder";
 import { saveFlowSnapshot, getFlowSnapshot, getFlowLatestWeek } from "./flowStorage";
 import { getCurrentWeek } from "./week";
 import { getWrikeClient } from "./wrike/client";
+import { initFolderCommentCache, clearFolderCommentCache } from "./wrike/fetcher";
 
 export interface SyncResult {
   ok: boolean;
@@ -106,6 +107,7 @@ export async function runSync(): Promise<SyncResult> {
   }
 
   try {
+    initFolderCommentCache();
     const week = getCurrentWeek();
     const snapshot = await buildWeeklySnapshot(week);
     const weeklyResult = await saveSnapshot(snapshot);
@@ -130,6 +132,7 @@ export async function runSync(): Promise<SyncResult> {
       saveErrors: saveErrors.length > 0 ? saveErrors : undefined,
     };
   } finally {
+    clearFolderCommentCache();
     await releaseSyncGuard(guard.owner);
   }
 }
