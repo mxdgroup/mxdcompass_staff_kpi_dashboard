@@ -84,7 +84,11 @@ export async function getTransitionsInRange(
 
 export async function getPipelineMovement(
   dateRange: { start: string; end: string },
-): Promise<{ total: number; byMember: Record<string, number> }> {
+): Promise<{
+  total: number;
+  byMember: Record<string, number>;
+  movedTaskIds: Set<string>; // P20: Per-task movement tracking
+}> {
   const { startTs, endTs } = parseISORange(dateRange);
   const transitions = await getTransitionsInRange(startTs, endTs);
 
@@ -103,7 +107,7 @@ export async function getPipelineMovement(
     byMember[memberId] = tasks.size;
   }
 
-  return { total: allTasks.size, byMember };
+  return { total: allTasks.size, byMember, movedTaskIds: allTasks };
 }
 
 // ---------- Return-for-review count ----------

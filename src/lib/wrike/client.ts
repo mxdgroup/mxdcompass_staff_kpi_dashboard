@@ -1,7 +1,7 @@
 // Wrike API v4 client with throttling, retry, and pagination
 
 import type { WrikeApiResponse } from "./types";
-import { buildServiceError, isRetryable } from "./errorUtils";
+import { buildServiceError, isRetryable, getRetryAfterMs } from "./errorUtils";
 
 const BASE_URL = "https://www.wrike.com/api/v4";
 const MIN_REQUEST_INTERVAL_MS = 1100;
@@ -90,7 +90,10 @@ export class WrikeClient {
         const body = await response.text();
 
         if (isRetryable(response.status) && attempt < MAX_RETRIES) {
-          await wait(jitteredBackoffMs(attempt));
+          // P14: Honor Retry-After header, but never go below jittered backoff
+          const retryAfter = getRetryAfterMs(response);
+          const backoff = jitteredBackoffMs(attempt);
+          await wait(retryAfter ? Math.max(retryAfter, backoff) : backoff);
           return this.request<T>(path, params, attempt + 1);
         }
 
@@ -150,7 +153,9 @@ export class WrikeClient {
         const text = await response.text();
 
         if (isRetryable(response.status) && attempt < MAX_RETRIES) {
-          await wait(jitteredBackoffMs(attempt));
+          const retryAfter = getRetryAfterMs(response);
+          const backoff = jitteredBackoffMs(attempt);
+          await wait(retryAfter ? Math.max(retryAfter, backoff) : backoff);
           return this.put<T>(path, body, attempt + 1);
         }
 
@@ -202,10 +207,11 @@ export class WrikeClient {
       try {
         response = await this.request<T>(path, requestParams);
       } catch (err) {
-        // If pagination token causes an error, return what we have so far
+        // P13: Throw on pagination failure — partial data is worse than no data
         if (nextPageToken && all.length > 0) {
-          console.warn(`[wrike] Pagination failed for ${path}, returning ${all.length} items collected so far`);
-          break;
+          throw new Error(
+            `Wrike pagination failed for ${path} after collecting ${all.length} items: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
         throw err;
       }

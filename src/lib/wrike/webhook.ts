@@ -27,10 +27,13 @@ const TTL_SECONDS = 365 * 24 * 60 * 60;
 const WEBHOOK_SECRET_KEY = "kpi:webhook:secret";
 
 export async function storeWebhookSecret(secret: string): Promise<void> {
-  const r = getSharedRedis(); if (!r) {
-    console.error("[webhook] No Redis available, cannot store secret");
-    return;
+  const r = getSharedRedis();
+  if (!r) {
+    throw new Error("No Redis available, cannot store webhook secret");
   }
+  // P10: Unconditional set — P8 moved storage out of after() into synchronous code,
+  // eliminating the race that originally motivated NX. Allowing overwrites ensures
+  // re-registration handshakes (after suspension recovery or secret rotation) succeed.
   await r.set(WEBHOOK_SECRET_KEY, secret, { ex: TTL_SECONDS });
   console.log("[webhook] Handshake secret stored in Redis with TTL");
 }
@@ -101,7 +104,9 @@ export async function storeTransition(
   const score = Math.floor(eventDate.getTime() / 1000);
   const key = redisKeyForWeek(eventDate);
 
-  const dedupKey = `${event.taskId}:${event.oldCustomStatusId}:${event.customStatusId}`;
+  // P11: Include 4-hour time bucket so legitimate repeated transitions aren't dropped
+  const timeBucket = Math.floor(score / (4 * 3600));
+  const dedupKey = `${event.taskId}:${event.oldCustomStatusId}:${event.customStatusId}:${timeBucket}`;
 
   const entry: TransitionEntry = {
     taskId: event.taskId,
@@ -113,15 +118,16 @@ export async function storeTransition(
 
   const memberValue = JSON.stringify({ ...entry, _dedup: dedupKey });
 
+  // P12: Atomic dedup — SADD and ZADD are in the same pipeline so either both
+  // persist or neither does. Prevents orphaned dedup keys on partial failure.
   const dedupSetKey = `${key}:dedup`;
-  const alreadyExists = await r.sismember(dedupSetKey, dedupKey);
-  if (alreadyExists) return;
-
-  const pipe = r.pipeline();
-  pipe.zadd(key, { score, member: memberValue });
-  pipe.sadd(dedupSetKey, dedupKey);
 
   const ttl = await r.ttl(key);
+
+  const pipe = r.pipeline();
+  pipe.sadd(dedupSetKey, dedupKey);                          // index 0: 1=new, 0=dup
+  pipe.zadd(key, { nx: true }, { score, member: memberValue });  // index 1: NX guards concurrent pipelines
+
   if (ttl === -1 || ttl === -2) {
     pipe.expire(key, TTL_SECONDS);
     pipe.expire(dedupSetKey, TTL_SECONDS);
@@ -129,6 +135,10 @@ export async function storeTransition(
 
   pipe.set("kpi:webhook:last_event", Math.floor(Date.now() / 1000));
 
-  await pipe.exec();
-  console.log(`[webhook] Stored transition: ${event.taskId} ${event.oldCustomStatusId} -> ${event.customStatusId}`);
+  const results = await pipe.exec();
+  const wasNew = results?.[0] === 1;
+
+  if (wasNew) {
+    console.log(`[webhook] Stored transition: ${event.taskId} ${event.oldCustomStatusId} -> ${event.customStatusId}`);
+  }
 }

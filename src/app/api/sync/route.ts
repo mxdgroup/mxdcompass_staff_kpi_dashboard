@@ -1,6 +1,6 @@
 import { loadOverridesFromRedis } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
-import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
+import { acquireSyncGuard, releaseSyncGuard, saveSnapshot } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
@@ -8,12 +8,19 @@ import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
+  // P27: Require auth (same bearer token as cron)
+  const authHeader = request.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   await loadOverridesFromRedis();
   const startTime = Date.now();
 
-  const acquired = await acquireSyncGuard();
-  if (!acquired) {
+  const guard = await acquireSyncGuard();
+  if (!guard.acquired) {
     return NextResponse.json(
       { error: "Sync already in progress" },
       { status: 409 }
@@ -40,6 +47,6 @@ export async function POST() {
       flowTickets: flowSnapshot.tickets.length,
     });
   } finally {
-    await releaseSyncGuard();
+    await releaseSyncGuard(guard.owner);
   }
 }

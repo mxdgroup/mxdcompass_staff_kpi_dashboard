@@ -27,15 +27,27 @@ export async function discoverWrikeConfig(): Promise<ConfigOverrides> {
 
   const contactIds: Record<string, string> = {};
   for (const member of config.team) {
-    const match = contacts.find(
+    // P24: Prefer full name match over first-name-only match
+    const fullNameMatch = contacts.find(
       (c) =>
-        c.firstName.toLowerCase() === member.name.toLowerCase() ||
         `${c.firstName} ${c.lastName}`.toLowerCase() ===
-          member.name.toLowerCase(),
+        member.name.toLowerCase(),
     );
-    if (match) {
-      contactIds[member.name] = match.id;
-      console.log(`[bootstrap] Matched ${member.name} → ${match.id} (${match.firstName} ${match.lastName})`);
+    if (fullNameMatch) {
+      contactIds[member.name] = fullNameMatch.id;
+      console.log(`[bootstrap] Matched ${member.name} → ${fullNameMatch.id} (full name: ${fullNameMatch.firstName} ${fullNameMatch.lastName})`);
+      continue;
+    }
+
+    // Fallback to first name, but warn if ambiguous
+    const firstNameMatches = contacts.filter(
+      (c) => c.firstName.toLowerCase() === member.name.toLowerCase(),
+    );
+    if (firstNameMatches.length === 1) {
+      contactIds[member.name] = firstNameMatches[0].id;
+      console.log(`[bootstrap] Matched ${member.name} → ${firstNameMatches[0].id} (first name: ${firstNameMatches[0].firstName} ${firstNameMatches[0].lastName})`);
+    } else if (firstNameMatches.length > 1) {
+      console.warn(`[bootstrap] Ambiguous match for ${member.name}: ${firstNameMatches.length} contacts share that first name. Add full name to config for deterministic matching.`);
     } else {
       console.warn(`[bootstrap] No contact match for ${member.name}`);
     }
@@ -129,18 +141,38 @@ export function loadOverridesFromDisk(): void {
 /**
  * Load overrides from Redis (async, for serverless on Vercel).
  * Call at the start of API routes to rehydrate contact IDs after cold start.
+ * P22: Returns load status instead of silently swallowing errors.
  */
-export async function loadOverridesFromRedis(): Promise<void> {
+export async function loadOverridesFromRedis(): Promise<{ loaded: boolean; error?: string }> {
   try {
     const { getSharedRedis } = await import("./storage");
     const redis = getSharedRedis();
-    if (!redis) return;
+    if (!redis) return { loaded: false, error: "Redis unavailable" };
     const raw = await redis.get<string>(REDIS_OVERRIDES_KEY);
     if (raw) {
       const overrides: ConfigOverrides = typeof raw === "string" ? JSON.parse(raw) : raw as unknown as ConfigOverrides;
       applyOverrides(overrides);
+
+      // P23: Validate contact IDs after loading
+      const unmapped = getUnmappedMembers();
+      if (unmapped.length > 0) {
+        const names = unmapped.map((m) => m.name).join(", ");
+        console.warn(`[bootstrap] Unmapped team members after override load: ${names}`);
+      }
+
+      return { loaded: true };
     }
-  } catch {
-    // Silently ignore
+    return { loaded: false, error: "No overrides found in Redis" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[bootstrap] Failed to load overrides from Redis:", message);
+    return { loaded: false, error: message };
   }
+}
+
+/**
+ * P23: Returns team members with empty wrikeContactId.
+ */
+export function getUnmappedMembers(): import("./config").TeamMember[] {
+  return config.team.filter((m) => !m.wrikeContactId);
 }

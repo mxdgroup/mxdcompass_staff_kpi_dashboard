@@ -29,18 +29,20 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
   const startTs = Math.floor(range.startTimestamp / 1000);
   const endTs = Math.floor(range.endTimestamp / 1000);
 
+  // P29: Track whether webhook metrics loaded or fell back to zeros
+  let webhookMetricsAvailable = true;
   const [pipelineData, returnData, approvalData] = await Promise.all([
-    getPipelineMovement(dateRange).catch(() => ({ total: 0, byMember: {} as Record<string, number> })),
+    getPipelineMovement(dateRange).catch(() => { webhookMetricsAvailable = false; return { total: 0, byMember: {} as Record<string, number>, movedTaskIds: new Set<string>() }; }),
     getReturnForReviewCount(
       dateRange,
       statuses.returnForReviewId ?? ""
-    ).catch(() => ({ total: 0, byMember: {} as Record<string, number>, tasks: [] as string[] })),
+    ).catch(() => { webhookMetricsAvailable = false; return { total: 0, byMember: {} as Record<string, number>, tasks: [] as string[] }; }),
     getApprovalCycleTime(
       dateRange,
       config.approvalWorkflowOwner,
       statuses.clientReviewId ?? "",
       statuses.completedIds
-    ).catch(() => ({ medianHours: null, times: [] as number[] })),
+    ).catch(() => { webhookMetricsAvailable = false; return { medianHours: null, times: [] as number[] }; }),
   ]);
 
   // Process each team member
@@ -57,7 +59,8 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
       const tasks: TaskSummary[] = wrikeData.tasks.map((t) => {
         const taskComments = wrikeData.comments.get(t.id) ?? [];
         const isReturned = returnData.tasks.includes(t.id);
-        const moved = (pipelineData.byMember[member.wrikeContactId] ?? 0) > 0;
+        // P20: Per-task movement check instead of per-member
+        const moved = pipelineData.movedTaskIds.has(t.id);
 
         return {
           id: t.id,
@@ -123,7 +126,7 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
   }
 
   // Build team summary
-  const teamSummary = await buildTeamSummary(employees, pipelineData.total, returnData.total, week);
+  const teamSummary = await buildTeamSummary(employees, pipelineData.total, returnData.total, week, webhookMetricsAvailable);
 
   // Build pipeline flow (simplified — counts per stage)
   const pipelineFlow = buildPipelineFlow(statuses.allStatuses, employees);
@@ -153,7 +156,8 @@ async function buildTeamSummary(
   employees: EmployeeWeekData[],
   totalPipelineMovement: number,
   totalReturns: number,
-  week: string
+  week: string,
+  webhookMetricsAvailable: boolean,
 ): Promise<TeamSummary> {
   const tasksCompleted = employees.reduce((sum, e) => sum + e.tasksCompleted, 0);
   const tasksUpdated = employees.reduce((sum, e) => sum + e.tasksUpdated, 0);
@@ -185,6 +189,7 @@ async function buildTeamSummary(
     prsMergedDelta: delta(prsMerged, priorSnap?.teamSummary.prsMerged),
     tasksCompletedAvg4w: avg4w.tasksCompleted,
     returnForReviewAvg4w: avg4w.returnForReview,
+    webhookMetricsAvailable,
   };
 }
 
@@ -192,7 +197,15 @@ function getPriorWeekStr(week: string): string | null {
   const [yearStr, weekPart] = week.split("-W");
   const weekNum = parseInt(weekPart, 10);
   if (weekNum <= 1) {
-    return `${parseInt(yearStr, 10) - 1}-W52`;
+    // P21: Compute actual last ISO week of prior year (can be 52 or 53)
+    const priorYear = parseInt(yearStr, 10) - 1;
+    // Dec 28 always falls in the last ISO week of the year
+    const dec28 = new Date(Date.UTC(priorYear, 11, 28));
+    const dayNum = dec28.getUTCDay() || 7;
+    dec28.setUTCDate(dec28.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(dec28.getUTCFullYear(), 0, 1));
+    const lastWeek = Math.ceil(((dec28.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+    return `${priorYear}-W${String(lastWeek).padStart(2, "0")}`;
   }
   return `${yearStr}-W${String(weekNum - 1).padStart(2, "0")}`;
 }

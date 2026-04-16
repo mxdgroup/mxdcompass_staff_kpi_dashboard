@@ -8,11 +8,18 @@ import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
+  // P27: Require auth (same bearer token as cron)
+  const authHeader = request.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const startTime = Date.now();
 
-  const acquired = await acquireSyncGuard();
-  if (!acquired) {
+  const guard = await acquireSyncGuard();
+  if (!guard.acquired) {
     return NextResponse.json(
       { error: "Sync already in progress" },
       { status: 409 },
@@ -59,6 +66,6 @@ export async function POST() {
     console.error("[bootstrap] Failed:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
-    await releaseSyncGuard();
+    await releaseSyncGuard(guard.owner);
   }
 }

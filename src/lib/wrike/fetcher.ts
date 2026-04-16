@@ -36,10 +36,14 @@ export interface WeeklyMemberData {
 // Workflow status resolution (cached)
 // ---------------------------------------------------------------------------
 
-let _cachedStatuses: ResolvedStatuses | undefined;
+// P25: Cache with TTL so workflow changes are picked up within 1 hour
+const STATUS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+let _cachedStatuses: { data: ResolvedStatuses; cachedAt: number } | undefined;
 
 export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
-  if (_cachedStatuses) return _cachedStatuses;
+  if (_cachedStatuses && Date.now() - _cachedStatuses.cachedAt < STATUS_CACHE_TTL_MS) {
+    return _cachedStatuses.data;
+  }
 
   const client = getWrikeClient();
   const workflows = await client.get<WrikeWorkflow>("/workflows");
@@ -103,7 +107,7 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
     (s) => s.name.toLowerCase() === config.clientPendingStatusName.toLowerCase(),
   )?.id;
 
-  _cachedStatuses = {
+  const resolved: ResolvedStatuses = {
     returnForReviewId,
     clientReviewId,
     completedIds,
@@ -113,7 +117,8 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
     clientPendingId,
     allStatuses,
   };
-  return _cachedStatuses;
+  _cachedStatuses = { data: resolved, cachedAt: Date.now() };
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +173,10 @@ export async function fetchWeeklyMemberData(
     allTasks.push(...memberTasks);
 
     // ---- Comments (folder-level) ----
+    // P16: Add date filter to prevent unbounded comment fetching
     const folderComments = await client.get<WrikeComment>(
       `/folders/${folderId}/comments`,
+      { updatedDate: wrikeDateRange(dateRange) },
     );
 
     // Build a set of member task IDs for quick lookup
@@ -193,8 +200,10 @@ export async function fetchWeeklyMemberData(
       .map((t) => t.id);
 
     for (const taskId of unmappedTaskIds) {
+      // P16: Date-filter per-task comments too
       const taskComments = await client.get<WrikeComment>(
         `/tasks/${taskId}/comments`,
+        { updatedDate: wrikeDateRange(dateRange) },
       );
       if (taskComments.length > 0) {
         commentsByTask.set(taskId, taskComments);
@@ -203,18 +212,31 @@ export async function fetchWeeklyMemberData(
   }
 
   // ---- Timelogs ----
-  // The /contacts/{id}/timelogs endpoint rejects date filter params.
-  // Fetch without filters and accept all timelogs for this contact.
-  // If the endpoint fails entirely, gracefully degrade to 0 hours.
+  // P17: Filter timelogs by requested week to avoid summing all-time hours
   let timelogs: WrikeTimelog[] = [];
   let totalHours = 0;
   try {
     timelogs = await client.get<WrikeTimelog>(
       `/contacts/${contactId}/timelogs`,
+      { trackedDate: wrikeDateRange(dateRange) },
     );
     totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
-  } catch (err) {
-    console.warn(`[wrike] Timelogs fetch failed for contact ${contactId}, skipping:`, err);
+  } catch {
+    // If trackedDate filter is rejected, fetch all and filter client-side
+    try {
+      const allTimelogs = await client.get<WrikeTimelog>(
+        `/contacts/${contactId}/timelogs`,
+      );
+      const rangeStart = new Date(dateRange.start).getTime();
+      const rangeEnd = new Date(dateRange.end).getTime();
+      timelogs = allTimelogs.filter((tl) => {
+        const d = new Date(tl.trackedDate).getTime();
+        return d >= rangeStart && d <= rangeEnd;
+      });
+      totalHours = timelogs.reduce((sum, tl) => sum + (tl.hours ?? 0), 0);
+    } catch (err) {
+      console.warn(`[wrike] Timelogs fetch failed for contact ${contactId}, skipping:`, err);
+    }
   }
 
   return { tasks: allTasks, comments: commentsByTask, timelogs, totalHours };
@@ -236,23 +258,42 @@ export async function fetchClientTasks(
   dateRange: { start: string; end: string },
 ): Promise<ClientFolderData> {
   const client = getWrikeClient();
+  const fields = JSON.stringify([
+    "customFields",
+    "responsibleIds",
+    "briefDescription",
+  ]);
 
-  // Fetch all tasks updated in range (no member filter)
-  const tasks = await client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
-    updatedDate: wrikeDateRange(dateRange),
-    fields: JSON.stringify([
-      "customFields",
-      "responsibleIds",
-      "briefDescription",
-    ]),
-    descendants: true,
-  });
+  // P18: Fetch recently updated tasks AND active-status tasks to avoid dropping stale items
+  const [recentTasks, activeTasks] = await Promise.all([
+    client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
+      updatedDate: wrikeDateRange(dateRange),
+      fields,
+      descendants: true,
+    }),
+    // Fetch tasks in active statuses regardless of update date
+    client.get<WrikeTask>(`/folders/${folderId}/tasks`, {
+      status: "Active",
+      fields,
+      descendants: true,
+    }),
+  ]);
+
+  // Merge and dedupe by taskId
+  const taskMap = new Map<string, WrikeTask>();
+  for (const t of recentTasks) taskMap.set(t.id, t);
+  for (const t of activeTasks) {
+    if (!taskMap.has(t.id)) taskMap.set(t.id, t);
+  }
+  const tasks = Array.from(taskMap.values());
 
   // Fetch comments for all tasks
   const commentsByTask = new Map<string, WrikeComment[]>();
 
+  // P16: Date-filter folder comments
   const folderComments = await client.get<WrikeComment>(
     `/folders/${folderId}/comments`,
+    { updatedDate: wrikeDateRange(dateRange) },
   );
 
   const taskIds = new Set(tasks.map((t) => t.id));
@@ -272,6 +313,7 @@ export async function fetchClientTasks(
   for (const task of unmapped) {
     const taskComments = await client.get<WrikeComment>(
       `/tasks/${task.id}/comments`,
+      { updatedDate: wrikeDateRange(dateRange) },
     );
     if (taskComments.length > 0) {
       commentsByTask.set(task.id, taskComments);

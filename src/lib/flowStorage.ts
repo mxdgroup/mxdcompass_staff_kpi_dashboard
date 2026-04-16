@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isRedisAvailable } from "./storage";
+import { getSharedRedis, isRedisAvailable } from "./storage";
 import type { FlowSnapshot } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -24,34 +24,38 @@ function localPath(key: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Redis helpers (lazy import to avoid crash when Redis unavailable)
-// ---------------------------------------------------------------------------
-
-async function getRedis() {
-  if (!isRedisAvailable()) return null;
-  const { Redis } = await import("@upstash/redis");
-  return Redis.fromEnv();
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function saveFlowSnapshot(snapshot: FlowSnapshot): Promise<void> {
+export async function saveFlowSnapshot(
+  snapshot: FlowSnapshot,
+): Promise<{ saved: boolean; reason?: string }> {
+  // P4: Reject empty snapshots to prevent overwriting good data
+  if (snapshot.tickets.length === 0) {
+    const reason = "Flow snapshot rejected: 0 tickets (possible Wrike outage)";
+    console.warn(`[flowStorage] ${reason}`);
+    return { saved: false, reason };
+  }
+
   const key = `${FLOW_PREFIX}${snapshot.week}`;
   const json = JSON.stringify(snapshot);
 
-  const redis = await getRedis();
+  // P6: Reuse shared Redis instance from storage.ts
+  const redis = getSharedRedis();
   if (redis) {
-    await redis.set(key, json, { ex: TTL_SECONDS });
-    await redis.set(FLOW_LATEST_KEY, snapshot.week);
-    return;
+    // P5: Atomic persistence via pipeline
+    const pipe = redis.pipeline();
+    pipe.set(key, json, { ex: TTL_SECONDS });
+    pipe.set(FLOW_LATEST_KEY, snapshot.week);
+    await pipe.exec();
+    return { saved: true };
   }
 
   // Local file fallback
   ensureDataDir();
   fs.writeFileSync(localPath(key), json, "utf-8");
   fs.writeFileSync(localPath(FLOW_LATEST_KEY), JSON.stringify(snapshot.week), "utf-8");
+  return { saved: true };
 }
 
 export async function getFlowSnapshot(
@@ -59,9 +63,8 @@ export async function getFlowSnapshot(
 ): Promise<FlowSnapshot | null> {
   const key = `${FLOW_PREFIX}${week}`;
 
-  const redis = await getRedis();
+  const redis = getSharedRedis();
   if (redis) {
-    // Upstash auto-parses JSON, returns the object directly
     const data = await redis.get<FlowSnapshot>(key);
     if (!data) return null;
     return data;
@@ -74,7 +77,7 @@ export async function getFlowSnapshot(
 }
 
 export async function getFlowLatestWeek(): Promise<string | null> {
-  const redis = await getRedis();
+  const redis = getSharedRedis();
   if (redis) {
     return redis.get<string>(FLOW_LATEST_KEY);
   }
