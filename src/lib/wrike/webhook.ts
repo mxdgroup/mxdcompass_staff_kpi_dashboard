@@ -21,8 +21,9 @@ export interface TransitionEntry {
   eventAuthorId: string;
 }
 
-// ---------- Webhook secret storage ----------
+// ---------- Constants ----------
 
+const TTL_SECONDS = 365 * 24 * 60 * 60;
 const WEBHOOK_SECRET_KEY = "kpi:webhook:secret";
 
 export async function storeWebhookSecret(secret: string): Promise<void> {
@@ -30,8 +31,8 @@ export async function storeWebhookSecret(secret: string): Promise<void> {
     console.error("[webhook] No Redis available, cannot store secret");
     return;
   }
-  await r.set(WEBHOOK_SECRET_KEY, secret);
-  console.log("[webhook] Handshake secret stored in Redis");
+  await r.set(WEBHOOK_SECRET_KEY, secret, { ex: TTL_SECONDS });
+  console.log("[webhook] Handshake secret stored in Redis with TTL");
 }
 
 async function getWebhookSecret(): Promise<string | null> {
@@ -40,7 +41,12 @@ async function getWebhookSecret(): Promise<string | null> {
     const stored = await r.get<string>(WEBHOOK_SECRET_KEY);
     if (stored) return stored;
   }
-  return process.env.WRIKE_WEBHOOK_SECRET ?? null;
+  const envSecret = process.env.WRIKE_WEBHOOK_SECRET;
+  if (envSecret) {
+    console.warn("[webhook] Redis secret missing, falling back to WRIKE_WEBHOOK_SECRET env var");
+    return envSecret;
+  }
+  return null;
 }
 
 // ---------- Signature validation ----------
@@ -48,7 +54,7 @@ async function getWebhookSecret(): Promise<string | null> {
 export async function validateSignature(body: string, signature: string): Promise<boolean> {
   const secret = await getWebhookSecret();
   if (!secret) {
-    console.error("[webhook] No webhook secret available (not in Redis or env)");
+    console.error("[webhook] No webhook secret available — check Redis key 'kpi:webhook:secret' and WRIKE_WEBHOOK_SECRET env var. Webhook may need re-registration.");
     return false;
   }
   const expected = crypto
@@ -85,8 +91,6 @@ export function redisKeyForWeek(date: Date): string {
 }
 
 // ---------- Store transition ----------
-
-const TTL_SECONDS = 365 * 24 * 60 * 60;
 
 export async function storeTransition(
   event: WrikeWebhookEvent,

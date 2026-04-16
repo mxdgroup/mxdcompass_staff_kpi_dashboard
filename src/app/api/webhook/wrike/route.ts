@@ -44,15 +44,22 @@ export async function POST(request: Request): Promise<Response> {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const statusChangedEvents: WrikeWebhookEvent[] = [];
-  const promises: Promise<void>[] = [];
-  for (const event of events) {
-    if (event.eventType === "TaskStatusChanged") {
-      promises.push(storeTransition(event));
-      statusChangedEvents.push(event);
+  const statusChangedEvents = events.filter(
+    (e) => e.eventType === "TaskStatusChanged",
+  );
+
+  // Store transitions in background after response is sent
+  after(async () => {
+    try {
+      const promises: Promise<void>[] = [];
+      for (const event of statusChangedEvents) {
+        promises.push(storeTransition(event));
+      }
+      await Promise.all(promises);
+    } catch (err) {
+      console.error("[webhook] Failed to process events in after():", err);
     }
-  }
-  await Promise.all(promises);
+  });
 
   // Write dates back to Wrike after the response is sent
   if (statusChangedEvents.length > 0) {
