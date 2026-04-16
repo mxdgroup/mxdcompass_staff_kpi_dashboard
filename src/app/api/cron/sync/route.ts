@@ -38,9 +38,9 @@ async function runSync(): Promise<NextResponse> {
 
   await loadOverridesFromRedis();
 
-  // Acquire sync guard
-  const acquired = await acquireSyncGuard();
-  if (!acquired) {
+  // Acquire sync guard (P1: owner-token based lock)
+  const guard = await acquireSyncGuard();
+  if (!guard.acquired) {
     const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
     if (webhookUrl) {
       await fetch(webhookUrl, {
@@ -59,9 +59,10 @@ async function runSync(): Promise<NextResponse> {
 
   try {
     // Check webhook health and auto-reactivate if stale
+    // P26: Treat missing timestamp as stale (first deploy, Redis flush, or dead webhook)
     const lastEvent = await getWebhookLastEvent();
     const webhookStale =
-      lastEvent !== null && Date.now() - lastEvent * 1000 > 48 * 60 * 60 * 1000;
+      lastEvent === null || Date.now() - lastEvent * 1000 > 48 * 60 * 60 * 1000;
 
     let webhookReactivated = false;
     if (webhookStale) {
@@ -99,8 +100,23 @@ async function runSync(): Promise<NextResponse> {
         returnForReview: snapshot.teamSummary.returnForReviewCount,
       },
     });
+  } catch (err) {
+    // P28: Slack alert on top-level sync failure
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[cron/sync] Top-level sync failure:", message);
+    const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
+    if (webhookUrl) {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: `KPI Sync FAILED: ${message}`,
+        }),
+      }).catch(() => {});
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   } finally {
-    await releaseSyncGuard();
+    await releaseSyncGuard(guard.owner);
   }
 }
 

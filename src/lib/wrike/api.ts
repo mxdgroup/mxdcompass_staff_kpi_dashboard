@@ -1,40 +1,26 @@
 /**
  * Reactivate a suspended Wrike webhook.
+ * P15: Routes through WrikeClient for retry, throttle, and timeout.
  * Returns true on success, false on failure (logs the error).
  */
+import { getWrikeClient } from "./client";
+
 export async function reactivateWebhook(): Promise<boolean> {
   const webhookId = process.env.WRIKE_WEBHOOK_ID;
-  const token = process.env.WRIKE_PERMANENT_ACCESS_TOKEN;
 
-  if (!webhookId || !token) {
+  if (!webhookId) {
     console.warn(
-      "[wrike] Cannot reactivate webhook — missing WRIKE_WEBHOOK_ID or WRIKE_PERMANENT_ACCESS_TOKEN env var",
+      "[wrike] Cannot reactivate webhook — missing WRIKE_WEBHOOK_ID env var",
     );
     return false;
   }
 
   try {
-    const res = await fetch(
-      `https://www.wrike.com/api/v4/webhooks/${webhookId}?status=Active`,
-      {
-        method: "PUT",
-        headers: { Authorization: `bearer ${token}` },
-      },
-    );
-
-    if (res.ok) {
-      console.log(`[wrike] Webhook ${webhookId} reactivated successfully`);
-      return true;
-    }
-
-    const body = await res.text().catch(() => "");
-    console.error(
-      `[wrike] Webhook reactivation failed: ${res.status} ${res.statusText}`,
-      body,
-    );
-    return false;
+    await getWrikeClient().put(`/webhooks/${webhookId}`, { status: "Active" });
+    console.log(`[wrike] Webhook ${webhookId} reactivated successfully`);
+    return true;
   } catch (err) {
-    console.error("[wrike] Webhook reactivation request failed:", err);
+    console.error("[wrike] Webhook reactivation failed:", err);
     return false;
   }
 }

@@ -29,6 +29,8 @@ export interface TeamSummary {
   // 4-week trailing averages
   tasksCompletedAvg4w: number | null;
   returnForReviewAvg4w: number | null;
+  // P29: False when webhook metrics fell back to zeros due to retrieval failure
+  webhookMetricsAvailable: boolean;
 }
 
 export interface EmployeeWeekData {

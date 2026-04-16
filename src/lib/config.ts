@@ -110,6 +110,11 @@ export function getClientByFolderId(folderId: string): ClientConfig | undefined 
   return config.clients.find((c) => c.wrikeFolderId === folderId);
 }
 
+/** P23: Returns team members with empty wrikeContactId. */
+export function getUnmappedMembers(): TeamMember[] {
+  return config.team.filter((m) => !m.wrikeContactId);
+}
+
 // Load persisted config overrides (contact IDs, custom field IDs) from disk
 // Only runs server-side (node:fs not available in browser)
 if (typeof window === "undefined") {

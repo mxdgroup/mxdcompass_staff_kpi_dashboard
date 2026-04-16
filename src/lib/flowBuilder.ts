@@ -409,8 +409,10 @@ export async function buildFlowSnapshot(
   const statuses = await resolveWorkflowStatuses();
   const now = new Date();
 
-  // Get webhook transitions for the week
-  const startTs = Math.floor(new Date(weekStart).getTime() / 1000);
+  // P19: Extend transition lookback 4 weeks before the selected week for accurate cycle times
+  const weekStartMs = new Date(weekStart).getTime();
+  const lookbackStartMs = weekStartMs - 4 * 7 * 24 * 60 * 60 * 1000;
+  const startTs = Math.floor(lookbackStartMs / 1000);
   const endTs = Math.floor(new Date(weekEnd).getTime() / 1000);
   const allWebhookTransitions = await getTransitionsInRange(startTs, endTs);
 

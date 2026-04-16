@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { WeeklySnapshot } from "./types";
@@ -115,10 +116,33 @@ const SNAPSHOT_PREFIX = "kpi:snapshot:";
 const LATEST_KEY = "kpi:latest";
 const TTL_SECONDS = 365 * 24 * 60 * 60;
 
-export async function saveSnapshot(snapshot: WeeklySnapshot): Promise<void> {
+export async function saveSnapshot(
+  snapshot: WeeklySnapshot,
+): Promise<{ saved: boolean; reason?: string }> {
+  // P4: Reject empty snapshots to prevent overwriting good data
+  if (snapshot.employees.length === 0) {
+    const reason = "Snapshot rejected: 0 employees (possible Wrike outage)";
+    console.warn(`[storage] ${reason}`);
+    return { saved: false, reason };
+  }
+
   const key = `${SNAPSHOT_PREFIX}${snapshot.week}`;
-  await kvSet(key, JSON.stringify(snapshot), TTL_SECONDS);
+  const json = JSON.stringify(snapshot);
+
+  // P5: Atomic persistence via pipeline when Redis available
+  const r = getRedis();
+  if (r) {
+    const pipe = r.pipeline();
+    pipe.set(key, json, { ex: TTL_SECONDS });
+    pipe.set(LATEST_KEY, snapshot.week);
+    await pipe.exec();
+    return { saved: true };
+  }
+
+  // Local file fallback (non-atomic, acceptable for dev)
+  await kvSet(key, json, TTL_SECONDS);
   await kvSet(LATEST_KEY, snapshot.week);
+  return { saved: true };
 }
 
 export async function getSnapshot(week: string): Promise<WeeklySnapshot | null> {
@@ -156,17 +180,44 @@ export async function getSnapshotWithHistory(
 // ---------------------------------------------------------------------------
 
 const SYNC_GUARD_KEY = "kpi:sync:running";
+const SYNC_GUARD_TTL = 600; // 2x maxDuration (P2: lock outlives function)
 
-export async function acquireSyncGuard(): Promise<boolean> {
-  if (!hasRedis) return true; // No guard needed locally
-  const r = getRedis()!;
-  const result = await r.set(SYNC_GUARD_KEY, "1", { ex: 300, nx: true });
-  return result === "OK";
+export interface SyncGuardResult {
+  acquired: boolean;
+  owner: string;
 }
 
-export async function releaseSyncGuard(): Promise<void> {
-  if (!hasRedis) return;
-  await kvDel(SYNC_GUARD_KEY);
+export async function acquireSyncGuard(): Promise<SyncGuardResult> {
+  // P3: In production, fail closed when Redis unavailable
+  if (!hasRedis) {
+    if (process.env.VERCEL) {
+      console.error("[storage] Redis unavailable in production — sync guard failed closed");
+      return { acquired: false, owner: "" };
+    }
+    return { acquired: true, owner: "local" }; // Local dev: no guard needed
+  }
+
+  // P1: Owner token prevents cross-run lock deletion
+  const owner = crypto.randomUUID();
+  const r = getRedis()!;
+  const result = await r.set(SYNC_GUARD_KEY, owner, { ex: SYNC_GUARD_TTL, nx: true });
+  return { acquired: result === "OK", owner };
+}
+
+export async function releaseSyncGuard(owner: string): Promise<void> {
+  if (!hasRedis || owner === "local") return;
+  const r = getRedis()!;
+
+  // P1: Atomic check-and-delete via Lua script — only delete if we own the lock
+  const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
+  try {
+    await r.eval(script, [SYNC_GUARD_KEY], [owner]);
+  } catch (err) {
+    // If Lua eval fails (e.g., Upstash plan limitation), do NOT fall back to
+    // non-atomic GET-then-DEL — that reintroduces the cross-run race P1 prevents.
+    // Let the TTL (600s) expire naturally instead.
+    console.warn("[storage] Lua eval failed; letting lock expire via TTL:", err);
+  }
 }
 
 // ---------------------------------------------------------------------------
