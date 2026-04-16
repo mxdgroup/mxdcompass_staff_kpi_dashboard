@@ -19,6 +19,8 @@ import {
   fetchClientTasks,
   type ResolvedStatuses,
 } from "./wrike/fetcher";
+import { getWrikeClient } from "./wrike/client";
+import type { WrikeTask, WrikeComment } from "./wrike/types";
 import { parseStatusChangesFromComments } from "./wrike/commentParser";
 import { getTransitionsInRange } from "./wrike/transitions";
 import type { TransitionEntry } from "./wrike/webhook";
@@ -457,6 +459,22 @@ export async function buildFlowSnapshot(
         statuses,
       );
 
+      // If no transitions found but task has a known status, create a synthetic
+      // entry so stale tickets appear in the CFD and have non-zero stage age
+      if (transitions.length === 0 && task.customStatusId) {
+        const statusName = resolveStatusName(task.customStatusId, statuses);
+        if (statusName !== "Unknown") {
+          transitions.push({
+            fromStage: "Unknown",
+            toStage: statusName,
+            fromStageId: "",
+            toStageId: task.customStatusId,
+            timestamp: task.updatedDate ?? now.toISOString(),
+            source: "comment" as const,
+          });
+        }
+      }
+
       const ticket = buildTicketFlow(
         task,
         transitions,
@@ -558,6 +576,140 @@ export async function buildFlowSnapshot(
     week,
     syncedAt: now.toISOString(),
     tickets: dedupedTickets,
+    agencyMetrics,
+    clientMetrics,
+    employeeMetrics,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Single-task patch: fetch one task from Wrike, rebuild its flow entry,
+// and splice it into the existing snapshot. Much faster than a full rebuild.
+// ---------------------------------------------------------------------------
+
+export async function patchFlowSnapshotForTask(
+  taskId: string,
+  existing: FlowSnapshot,
+): Promise<FlowSnapshot> {
+  const statuses = await resolveWorkflowStatuses();
+  const now = new Date();
+  const client = getWrikeClient();
+
+  // Fetch just this task + its comments from Wrike API (2 requests)
+  const [tasks, comments] = await Promise.all([
+    client.get<WrikeTask>(`/tasks/${taskId}`, {
+      fields: JSON.stringify(["customFields", "responsibleIds", "briefDescription"]),
+    }),
+    client.get<WrikeComment>(`/tasks/${taskId}/comments`),
+  ]);
+
+  const task = tasks[0];
+  if (!task) {
+    console.warn(`[flow] patchFlowSnapshotForTask: task ${taskId} not found in Wrike`);
+    return existing;
+  }
+
+  // Get all webhook transitions for the lookback window (same as full build)
+  const { start: weekStart, end: weekEnd } = getWeekRange(existing.week);
+  const weekStartMs = new Date(weekStart).getTime();
+  const lookbackStartMs = weekStartMs - 4 * 7 * 24 * 60 * 60 * 1000;
+  const startTs = Math.floor(lookbackStartMs / 1000);
+  const endTs = Math.floor(new Date(weekEnd).getTime() / 1000);
+  const allTransitions = await getTransitionsInRange(startTs, endTs);
+  const taskWebhook = allTransitions.filter((t) => t.taskId === taskId);
+
+  // Parse comment transitions
+  const commentTransitions = parseStatusChangesFromComments(comments, statuses.allStatuses);
+
+  // Merge
+  const transitions = mergeTransitions(taskWebhook, commentTransitions, statuses);
+
+  // Synthetic transition for stale tickets
+  if (transitions.length === 0 && task.customStatusId) {
+    const statusName = resolveStatusName(task.customStatusId, statuses);
+    if (statusName !== "Unknown") {
+      transitions.push({
+        fromStage: "Unknown",
+        toStage: statusName,
+        fromStageId: "",
+        toStageId: task.customStatusId,
+        timestamp: task.updatedDate ?? now.toISOString(),
+        source: "comment" as const,
+      });
+    }
+  }
+
+  // Determine client name from existing ticket or folder membership
+  const existingTicket = existing.tickets.find((t) => t.taskId === taskId);
+  const clientName = existingTicket?.clientName ?? "Unknown";
+
+  // Build the updated ticket flow entry
+  const updatedTicket = buildTicketFlow(task, transitions, clientName, statuses, now);
+
+  // Replace or add in the ticket list
+  const tickets = existing.tickets.filter((t) => t.taskId !== taskId);
+  tickets.push(updatedTicket);
+
+  // Recompute all metrics with the updated ticket list
+  const agencyMetrics = computeFlowMetrics(tickets, weekStart, weekEnd);
+
+  const clientMetrics: Record<string, FlowMetrics> = {};
+  for (const c of config.clients) {
+    const clientTickets = tickets.filter((t) => t.clientName === c.name);
+    if (clientTickets.length > 0) {
+      clientMetrics[c.name] = computeFlowMetrics(clientTickets, weekStart, weekEnd);
+    }
+  }
+
+  const employeeMetrics: Record<string, EmployeeFlowMetrics> = {};
+  const ticketsByEmployee = new Map<string, TicketFlowEntry[]>();
+  for (const ticket of tickets) {
+    const cid = ticket.assigneeContactId;
+    if (!cid) continue;
+    const arr = ticketsByEmployee.get(cid) ?? [];
+    arr.push(ticket);
+    ticketsByEmployee.set(cid, arr);
+  }
+
+  for (const [contactId, empTickets] of ticketsByEmployee) {
+    const member = getMemberByContactId(contactId);
+    if (!member) continue;
+
+    const base = computeFlowMetrics(empTickets, weekStart, weekEnd);
+    const execTimes = empTickets.map((t) => t.executionHours).filter((h): h is number => h !== null);
+    const efforts = empTickets.map((t) => t.effortScore).filter((e): e is number => e !== null);
+
+    let totalActive = 0;
+    let totalAll = 0;
+    for (const ticket of empTickets) {
+      for (const sd of ticket.stageDurations) {
+        totalAll += sd.durationHours;
+        if (ACTIVE_STAGES.has(sd.stageName)) totalActive += sd.durationHours;
+      }
+    }
+
+    employeeMetrics[contactId] = {
+      ...base,
+      name: member.name,
+      contactId,
+      role: member.role,
+      medianExecutionHours: computePercentile(execTimes, 50),
+      avgEffortScore:
+        efforts.length > 0
+          ? Math.round((efforts.reduce((a, b) => a + b, 0) / efforts.length) * 100) / 100
+          : null,
+      flowEfficiency:
+        totalAll > 0
+          ? Math.round((totalActive / totalAll) * 10000) / 100
+          : null,
+      tickets: empTickets,
+    };
+  }
+
+  return {
+    week: existing.week,
+    syncedAt: now.toISOString(),
+    tickets,
     agencyMetrics,
     clientMetrics,
     employeeMetrics,

@@ -41,6 +41,11 @@ export interface WeeklyMemberData {
 const STATUS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let _cachedStatuses: { data: ResolvedStatuses; cachedAt: number } | undefined;
 
+/** Clear in-memory status cache so the next call hits Wrike API fresh. */
+export function clearStatusCache(): void {
+  _cachedStatuses = undefined;
+}
+
 export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
   // Check in-memory cache first
   if (_cachedStatuses && Date.now() - _cachedStatuses.cachedAt < STATUS_CACHE_TTL_MS) {

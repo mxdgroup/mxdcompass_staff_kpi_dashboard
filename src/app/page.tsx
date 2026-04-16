@@ -25,6 +25,20 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
 
+  async function resyncTask(taskId: string) {
+    const res = await fetch("/internal/kpis/api/sync/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? `Task resync failed (${res.status})`);
+      return;
+    }
+    fetchData(week);
+  }
+
   useEffect(() => {
     fetchData(week);
   }, [week]);
@@ -63,16 +77,29 @@ export default function DashboardPage() {
 
   async function triggerSync() {
     setSyncing(true);
-    const res = await fetch("/internal/kpis/api/sync", { method: "POST" });
-    setSyncing(false);
-    if (res.ok) fetchData("current");
+    setError("");
+    try {
+      const res = await fetch("/internal/kpis/api/sync/trigger", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error ?? `Sync failed (${res.status})`);
+      } else if (body.saveErrors?.length) {
+        setError(`Sync partial: ${body.saveErrors.join("; ")}`);
+      } else {
+        fetchData("current");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function triggerBootstrap() {
     setBootstrapping(true);
     setError("");
     try {
-      const res = await fetch("/internal/kpis/api/bootstrap", { method: "POST" });
+      const res = await fetch("/internal/kpis/api/bootstrap/trigger", { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setError(body.error ?? "Bootstrap failed");
@@ -255,6 +282,14 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {!selectedClient && snap?.teamSummary.webhookMetricsAvailable === false && (
+        <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3">
+          <p className="text-sm text-amber-700">
+            Pipeline movement and return-for-review counts may be incomplete (webhook data unavailable)
+          </p>
+        </div>
+      )}
+
       {/* Agency Overview (filtered by client when selected) */}
       <AgencyOverview
         flowMetrics={displayFlowMetrics}
@@ -289,6 +324,7 @@ export default function DashboardPage() {
             tickets={filteredTickets}
             showAssignee
             showClient={!selectedClient}
+            onResyncTask={resyncTask}
           />
         </div>
       </section>

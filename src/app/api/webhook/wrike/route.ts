@@ -6,6 +6,10 @@ import {
   type WrikeWebhookEvent,
 } from "@/lib/wrike/webhook";
 import { applyDateForStatusChange } from "@/lib/wrike/dateWriter";
+import { syncTask } from "@/lib/syncRunner";
+
+// after() runs within this function's lifetime — needs time for per-task sync patches
+export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<Response> {
   // --- HANDSHAKE ---
@@ -82,6 +86,25 @@ export async function POST(request: Request): Promise<Response> {
           await applyDateForStatusChange(event);
         } catch (err) {
           console.error(`[webhook] Date write failed for task ${event.taskId}:`, err);
+        }
+      }
+    });
+
+    // Auto-sync: patch the flow snapshot for each affected task so the dashboard
+    // reflects changes immediately. Uses targeted single-task fetch (~2 Wrike API
+    // calls per task) instead of a full rebuild (~20+ calls).
+    const affectedTaskIds = [...new Set(statusChangedEvents.map((e) => e.taskId))];
+    after(async () => {
+      for (const taskId of affectedTaskIds) {
+        try {
+          const result = await syncTask(taskId);
+          if (result.ok) {
+            console.log(`[webhook] Auto-synced task ${taskId}`);
+          } else {
+            console.error(`[webhook] Auto-sync failed for task ${taskId}: ${result.error}`);
+          }
+        } catch (err) {
+          console.error(`[webhook] Auto-sync error for task ${taskId}:`, err);
         }
       }
     });
