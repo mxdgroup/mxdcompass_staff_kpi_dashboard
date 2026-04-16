@@ -160,6 +160,8 @@ function buildTicketFlow(
     responsibleIds: string[];
     customFields: { id: string; value?: string }[];
     completedDate?: string;
+    createdDate?: string;
+    updatedDate?: string;
   },
   transitions: StageTransition[],
   clientName: string,
@@ -179,10 +181,20 @@ function buildTicketFlow(
       : task.status,
   );
 
-  // Current stage age: time since last transition
+  // Best-effort "entered current stage" timestamp:
+  // 1. Last transition timestamp (if any transitions exist)
+  // 2. createdDate (if status is "New" — never transitioned)
+  // 3. updatedDate (general fallback)
   const lastTransition = transitions[transitions.length - 1];
-  const currentStageAgeHours = lastTransition
-    ? (now.getTime() - new Date(lastTransition.timestamp).getTime()) /
+  const currentStageEnteredAt: string | null =
+    lastTransition?.timestamp ??
+    (currentStage === "New" && task.createdDate ? task.createdDate : null) ??
+    task.updatedDate ??
+    null;
+
+  // Current stage age: time since entered current stage
+  const currentStageAgeHours = currentStageEnteredAt
+    ? (now.getTime() - new Date(currentStageEnteredAt).getTime()) /
       (1000 * 60 * 60)
     : 0;
 
@@ -238,6 +250,24 @@ function buildTicketFlow(
     }
   }
 
+  // Guarantee the current stage has a StageDuration entry.
+  // This ensures the table, flow metrics, and charts always have data for
+  // where each ticket IS right now, even without full transition history.
+  const hasCurrentStageDuration = durations.some(
+    (d) => d.stageName === currentStage,
+  );
+  if (!hasCurrentStageDuration && currentStage && currentStageEnteredAt) {
+    const enteredMs = new Date(currentStageEnteredAt).getTime();
+    const durationHours = (now.getTime() - enteredMs) / (1000 * 60 * 60);
+    durations.push({
+      stageName: currentStage,
+      stageId: task.customStatusId ?? "",
+      enteredAt: currentStageEnteredAt,
+      exitedAt: null,
+      durationHours: Math.round(durationHours * 100) / 100,
+    });
+  }
+
   return {
     taskId: task.id,
     title: task.title,
@@ -249,6 +279,7 @@ function buildTicketFlow(
     transitions,
     stageDurations: durations,
     currentStage,
+    currentStageEnteredAt,
     currentStageAgeHours: Math.round(currentStageAgeHours * 100) / 100,
     enteredPlanDate,
     completedDate: task.completedDate ?? firstCompleted?.timestamp ?? null,
@@ -428,6 +459,7 @@ export async function buildFlowSnapshot(
 
   // Fetch tasks from each client folder
   const allTickets: TicketFlowEntry[] = [];
+  const folderErrors: string[] = [];
 
   for (const client of config.clients) {
     let data;
@@ -437,7 +469,9 @@ export async function buildFlowSnapshot(
         end: weekEnd,
       });
     } catch (err) {
-      console.error(`[flow] Failed to fetch tasks for ${client.name}:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[flow] Failed to fetch tasks for ${client.name} (folder ${client.wrikeFolderId}): ${msg}`);
+      folderErrors.push(`${client.name}: ${msg}`);
       continue;
     }
 
@@ -582,6 +616,12 @@ export async function buildFlowSnapshot(
   ).length;
   const withReal = dedupedTickets.length - syntheticOnly;
   console.log(`[flow] Summary: ${dedupedTickets.length} tickets, ${withReal} with real transitions, ${syntheticOnly} synthetic-only`);
+  if (folderErrors.length > 0) {
+    console.error(`[flow] Folder fetch errors (${folderErrors.length}/${config.clients.length} folders failed): ${folderErrors.join(" | ")}`);
+  }
+  if (dedupedTickets.length === 0 && folderErrors.length > 0) {
+    console.error(`[flow] ALL folders failed — likely an auth issue. Check WRIKE_PERMANENT_ACCESS_TOKEN.`);
+  }
 
   return {
     week,
@@ -590,6 +630,7 @@ export async function buildFlowSnapshot(
     agencyMetrics,
     clientMetrics,
     employeeMetrics,
+    folderErrors: folderErrors.length > 0 ? folderErrors : undefined,
   };
 }
 

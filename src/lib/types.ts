@@ -152,6 +152,7 @@ export interface TicketFlowEntry {
   transitions: StageTransition[];
   stageDurations: StageDuration[];
   currentStage: string;
+  currentStageEnteredAt: string | null;
   currentStageAgeHours: number;
   enteredPlanDate: string | null;
   completedDate: string | null;
@@ -188,6 +189,7 @@ export interface FlowSnapshot {
   agencyMetrics: FlowMetrics;
   clientMetrics: Record<string, FlowMetrics>; // keyed by client name
   employeeMetrics: Record<string, EmployeeFlowMetrics>; // keyed by contactId
+  folderErrors?: string[]; // Per-folder fetch errors for diagnostics
 }
 
 export interface FlowApiResponse {

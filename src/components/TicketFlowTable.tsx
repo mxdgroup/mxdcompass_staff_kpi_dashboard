@@ -82,11 +82,15 @@ export function TicketFlowTable({
     return true;
   });
 
-  // Track which stages have data in the visible set
+  // Track which stages have data in the visible set (includes current stage fallback)
   const stagesWithData = new Set<string>();
   for (const t of filtered) {
     for (const sd of t.stageDurations) {
       stagesWithData.add(sd.stageName);
+    }
+    // Current stage always counts as "has data" for column sizing
+    if (t.currentStage) {
+      stagesWithData.add(t.currentStage);
     }
   }
 
@@ -226,7 +230,7 @@ export function TicketFlowTable({
                   const sd = getStageDuration(ticket.stageDurations, stage);
                   const isCurrent = ticket.currentStage === stage;
 
-                  if (!sd) {
+                  if (!sd && !isCurrent) {
                     return (
                       <td
                         key={stage}
@@ -237,20 +241,40 @@ export function TicketFlowTable({
                     );
                   }
 
+                  if (!sd && isCurrent) {
+                    // Fallback: show current stage position even without transition data
+                    const age = ticket.currentStageAgeHours;
+                    const enteredAt = ticket.currentStageEnteredAt;
+                    return (
+                      <td key={stage} className="px-2 py-2 text-center">
+                        <div className="rounded px-1.5 py-1 ring-2 ring-blue-400 border border-dashed border-blue-300 bg-blue-50/50">
+                          {enteredAt && (
+                            <div className="text-[10px] text-blue-400">
+                              {formatTimestamp(enteredAt)}
+                            </div>
+                          )}
+                          <div className="text-xs font-semibold text-blue-600">
+                            {age > 0 ? formatDuration(age) : "current"}
+                          </div>
+                        </div>
+                      </td>
+                    );
+                  }
+
                   return (
                     <td key={stage} className="px-2 py-2 text-center">
                       <div
                         className={`rounded px-1.5 py-1 ${
                           isCurrent
-                            ? "ring-2 ring-blue-400 " + durationColor(sd.durationHours)
-                            : durationColor(sd.durationHours)
+                            ? "ring-2 ring-blue-400 " + durationColor(sd!.durationHours)
+                            : durationColor(sd!.durationHours)
                         }`}
                       >
                         <div className="text-[10px] text-gray-500">
-                          {formatTimestamp(sd.enteredAt)}
+                          {formatTimestamp(sd!.enteredAt)}
                         </div>
                         <div className="text-xs font-semibold">
-                          {formatDuration(sd.durationHours)}
+                          {formatDuration(sd!.durationHours)}
                         </div>
                       </div>
                     </td>

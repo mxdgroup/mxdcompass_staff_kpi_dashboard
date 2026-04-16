@@ -10,6 +10,7 @@ import { buildWeeklySnapshot } from "./aggregator";
 import { buildFlowSnapshot, patchFlowSnapshotForTask } from "./flowBuilder";
 import { saveFlowSnapshot, getFlowSnapshot, getFlowLatestWeek } from "./flowStorage";
 import { getCurrentWeek } from "./week";
+import { getWrikeClient } from "./wrike/client";
 
 export interface SyncResult {
   ok: boolean;
@@ -18,6 +19,7 @@ export interface SyncResult {
   membersProcessed: number;
   memberErrors: number;
   flowTickets: number;
+  flowFolderErrors?: string[];
   saveErrors?: string[];
   error?: string;
   skipped?: boolean;
@@ -57,6 +59,37 @@ export async function runSync(): Promise<SyncResult> {
     };
   }
 
+  // Quick Wrike connectivity check — catch expired tokens before wasting time
+  try {
+    const client = getWrikeClient();
+    const contacts = await client.get<{ id: string }>("/contacts", { me: true });
+    if (contacts.length === 0) {
+      return {
+        ok: false,
+        week: "",
+        duration: "0s",
+        membersProcessed: 0,
+        memberErrors: 0,
+        flowTickets: 0,
+        error: "Wrike API returned empty response for /contacts?me=true. Token may be invalid.",
+      };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isAuth = msg.includes("401") || msg.includes("403");
+    return {
+      ok: false,
+      week: "",
+      duration: "0s",
+      membersProcessed: 0,
+      memberErrors: 0,
+      flowTickets: 0,
+      error: isAuth
+        ? `Wrike API authentication failed (${msg}). The WRIKE_PERMANENT_ACCESS_TOKEN is likely expired — generate a new one in Wrike > Apps & Integrations > API.`
+        : `Wrike API connectivity check failed: ${msg}`,
+    };
+  }
+
   const startTime = Date.now();
 
   const guard = await acquireSyncGuard();
@@ -93,6 +126,7 @@ export async function runSync(): Promise<SyncResult> {
       membersProcessed: snapshot.employees.length,
       memberErrors: snapshot.memberErrors.length,
       flowTickets: flowSnapshot.tickets.length,
+      flowFolderErrors: flowSnapshot.folderErrors,
       saveErrors: saveErrors.length > 0 ? saveErrors : undefined,
     };
   } finally {
