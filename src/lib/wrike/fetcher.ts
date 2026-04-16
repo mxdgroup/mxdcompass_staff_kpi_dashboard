@@ -336,10 +336,21 @@ export async function fetchClientTasks(
   // Fetch comments for all tasks
   const commentsByTask = new Map<string, WrikeComment[]>();
 
-  // P16: Date-filter folder comments
+  // Extend comment lookback 4 weeks before the selected week so the comment
+  // parser can reconstruct full transition history. The task fetch (above) uses
+  // the original dateRange — only comments need the wider window.
+  // NOTE: fetchWeeklyMemberData() is a separate function with its own narrower
+  // comment date range — this change does NOT affect it.
+  const commentLookbackMs = 4 * 7 * 24 * 60 * 60 * 1000;
+  const commentStartDate = new Date(new Date(dateRange.start).getTime() - commentLookbackMs);
+  const commentDateRange = {
+    start: commentStartDate.toISOString().slice(0, 10),
+    end: dateRange.end,
+  };
+
   const folderComments = await client.get<WrikeComment>(
     `/folders/${folderId}/comments`,
-    { updatedDate: wrikeDateRange(dateRange) },
+    { updatedDate: wrikeDateRange(commentDateRange) },
   );
 
   const taskIds = new Set(tasks.map((t) => t.id));
@@ -354,12 +365,12 @@ export async function fetchClientTasks(
     }
   }
 
-  // Fallback per-task comment fetch for unmapped tasks
+  // Fallback per-task comment fetch for unmapped tasks (same extended lookback)
   const unmapped = tasks.filter((t) => !mappedTaskIds.has(t.id));
   for (const task of unmapped) {
     const taskComments = await client.get<WrikeComment>(
       `/tasks/${task.id}/comments`,
-      { updatedDate: wrikeDateRange(dateRange) },
+      { updatedDate: wrikeDateRange(commentDateRange) },
     );
     if (taskComments.length > 0) {
       commentsByTask.set(task.id, taskComments);

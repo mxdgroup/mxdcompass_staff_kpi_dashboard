@@ -483,6 +483,11 @@ export async function buildFlowSnapshot(
         now,
       );
 
+      const isSynthetic = taskWebhook.length === 0 && commentTransitions.length === 0;
+      console.log(
+        `[flow] ${task.id} "${task.title.slice(0, 40)}" — webhook:${taskWebhook.length} comment:${commentTransitions.length} merged:${transitions.length}${isSynthetic ? " (synthetic)" : ""}`,
+      );
+
       allTickets.push(ticket);
     }
   }
@@ -571,6 +576,12 @@ export async function buildFlowSnapshot(
       tickets: empTickets,
     };
   }
+
+  const syntheticOnly = dedupedTickets.filter(
+    (t) => t.transitions.length === 1 && t.transitions[0].fromStage === "Unknown" && t.transitions[0].source === "comment",
+  ).length;
+  const withReal = dedupedTickets.length - syntheticOnly;
+  console.log(`[flow] Summary: ${dedupedTickets.length} tickets, ${withReal} with real transitions, ${syntheticOnly} synthetic-only`);
 
   return {
     week,
