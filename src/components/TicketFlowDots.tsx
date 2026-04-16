@@ -18,7 +18,19 @@ const STAGES = [
   "Completed",
 ];
 
-type SortKey = "title" | "effort" | "currentStage" | "cycleTime" | "assignee";
+type SortKey = "title" | "effort" | "currentStage" | "cycleTime" | "maxActiveAge" | "assignee";
+
+const ACTIVE_SORT_STAGES = new Set(["Planned", "In Progress", "In Review", "Client Pending"]);
+
+function maxActiveStageHours(t: TicketFlowEntry): number {
+  let max = 0;
+  for (const sd of t.stageDurations) {
+    if (ACTIVE_SORT_STAGES.has(sd.stageName) && sd.durationHours > max) {
+      max = sd.durationHours;
+    }
+  }
+  return max;
+}
 
 // Day-based color thresholds for dot badges
 const DAY_THRESHOLD_AMBER = 3;
@@ -64,9 +76,9 @@ export function TicketFlowDots({
   showAssignee = false,
   showClient = false,
 }: TicketFlowDotsProps) {
-  const [sortKey, setSortKey] = useState<SortKey>("cycleTime");
+  const [sortKey, setSortKey] = useState<SortKey>("maxActiveAge");
   const [sortAsc, setSortAsc] = useState(false);
-  const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "completed">("active");
   const [assigneeFilter, setAssigneeFilter] = useState("");
 
   function toggleSort(key: SortKey) {
@@ -113,6 +125,9 @@ export function TicketFlowDots({
         break;
       case "cycleTime":
         cmp = (a.totalCycleHours ?? 999) - (b.totalCycleHours ?? 999);
+        break;
+      case "maxActiveAge":
+        cmp = maxActiveStageHours(a) - maxActiveStageHours(b);
         break;
       case "assignee":
         cmp = a.assigneeName.localeCompare(b.assigneeName);
