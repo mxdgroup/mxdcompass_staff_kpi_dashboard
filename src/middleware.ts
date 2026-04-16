@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-export default function proxy() {
+export function middleware() {
   const response = NextResponse.next();
 
   // Only allow embedding within the Compass app
@@ -11,3 +11,7 @@ export default function proxy() {
 
   return response;
 }
+
+export const config = {
+  matcher: ["/", "/flow", "/yesterday"],
+};
