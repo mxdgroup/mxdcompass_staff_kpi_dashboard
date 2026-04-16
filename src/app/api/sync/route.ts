@@ -48,21 +48,26 @@ export async function POST(request: Request) {
   try {
     const week = getCurrentWeek();
     const snapshot = await buildWeeklySnapshot(week);
-    await saveSnapshot(snapshot);
+    const weeklyResult = await saveSnapshot(snapshot);
 
     // Build flow dashboard snapshot
     const flowSnapshot = await buildFlowSnapshot(week);
-    await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshot(flowSnapshot);
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
+    const saveErrors: string[] = [];
+    if (!weeklyResult.saved) saveErrors.push(`Weekly: ${weeklyResult.reason}`);
+    if (!flowResult.saved) saveErrors.push(`Flow: ${flowResult.reason}`);
+
     return NextResponse.json({
-      ok: true,
+      ok: saveErrors.length === 0,
       week,
       duration: `${duration}s`,
       membersProcessed: snapshot.employees.length,
       memberErrors: snapshot.memberErrors.length,
       flowTickets: flowSnapshot.tickets.length,
+      saveErrors: saveErrors.length > 0 ? saveErrors : undefined,
     });
   } finally {
     await releaseSyncGuard(guard.owner);

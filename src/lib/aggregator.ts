@@ -14,7 +14,8 @@ import type {
 import { getWeekRange, getWeekDays } from "./week";
 import { getSnapshot } from "./storage";
 import { fetchWeeklyMemberData, resolveWorkflowStatuses } from "./wrike/fetcher";
-import { getPipelineMovement, getReturnForReviewCount, getApprovalCycleTime } from "./wrike/transitions";
+import { getPipelineMovement, getReturnForReviewCount, getApprovalCycleTime, getTransitionsInRange } from "./wrike/transitions";
+import type { TransitionEntry } from "./wrike/webhook";
 import { fetchWeeklyGitHubData } from "./github/fetcher";
 import type { DailyCommits, GitHubWeekData } from "./github/types";
 
@@ -128,8 +129,11 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
   // Build team summary
   const teamSummary = await buildTeamSummary(employees, pipelineData.total, returnData.total, week, webhookMetricsAvailable);
 
-  // Build pipeline flow (simplified — counts per stage)
-  const pipelineFlow = buildPipelineFlow(statuses.allStatuses, employees);
+  // Fetch raw transitions for pipeline flow stage entry/exit counting
+  const weekTransitions = await getTransitionsInRange(startTs, endTs);
+
+  // Build pipeline flow with actual transition data
+  const pipelineFlow = buildPipelineFlow(statuses.allStatuses, employees, weekTransitions);
 
   // Approval cycle time
   const approvalOwner = getMemberByContactId(config.approvalWorkflowOwner);
@@ -266,32 +270,64 @@ function mapGitHubData(ghData: GitHubWeekData, week: string): GitHubEmployeeData
   };
 }
 
+// Normalize to canonical pipeline stages (same logic as flowBuilder.ts normalizeStage)
+function normalizeStageName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower === "client review" || lower === "client pending") return "Client Pending";
+  if (lower === "internal review" || lower === "in review") return "In Review";
+  if (lower === "completed" || lower === "approved" || lower === "complete") return "Completed";
+  return name;
+}
+
 function buildPipelineFlow(
   allStatuses: Array<{ id: string; name: string; group?: string }>,
-  employees: EmployeeWeekData[]
+  employees: EmployeeWeekData[],
+  transitions: TransitionEntry[],
 ): PipelineStageCount[] {
   const allTasks = employees.flatMap((e) => e.tasks);
   const stageMap = new Map<string, PipelineStageCount>();
 
-  for (const status of allStatuses) {
-    stageMap.set(status.id, {
-      stageName: status.name,
-      stageId: status.id,
-      currentCount: 0,
-      enteredThisWeek: 0,
-      leftThisWeek: 0,
-    });
-  }
+  // Build status ID -> name lookup for normalization
+  const statusNameById = new Map(allStatuses.map((s) => [s.id, s.name]));
 
-  for (const task of allTasks) {
-    const stage = stageMap.get(task.customStatusId);
-    if (stage) {
-      stage.currentCount++;
-      if (task.movedThisWeek) {
-        stage.enteredThisWeek++;
-      }
+  // Initialize pipeline stages (dedupe by canonical name)
+  for (const status of allStatuses) {
+    const canonical = normalizeStageName(status.name);
+    if (!stageMap.has(canonical)) {
+      stageMap.set(canonical, {
+        stageName: canonical,
+        stageId: status.id,
+        currentCount: 0,
+        enteredThisWeek: 0,
+        leftThisWeek: 0,
+      });
     }
   }
 
-  return Array.from(stageMap.values()).filter((s) => s.currentCount > 0 || s.enteredThisWeek > 0);
+  // Current counts from task state
+  for (const task of allTasks) {
+    const name = statusNameById.get(task.customStatusId);
+    if (!name) continue;
+    const canonical = normalizeStageName(name);
+    const stage = stageMap.get(canonical);
+    if (stage) stage.currentCount++;
+  }
+
+  // Count entries and exits from actual webhook transitions
+  for (const t of transitions) {
+    const toName = statusNameById.get(t.toStatusId);
+    const fromName = statusNameById.get(t.fromStatusId);
+    if (toName) {
+      const stage = stageMap.get(normalizeStageName(toName));
+      if (stage) stage.enteredThisWeek++;
+    }
+    if (fromName) {
+      const stage = stageMap.get(normalizeStageName(fromName));
+      if (stage) stage.leftThisWeek++;
+    }
+  }
+
+  return Array.from(stageMap.values()).filter(
+    (s) => s.currentCount > 0 || s.enteredThisWeek > 0 || s.leftThisWeek > 0,
+  );
 }

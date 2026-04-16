@@ -98,7 +98,11 @@ export function redisKeyForWeek(date: Date): string {
 export async function storeTransition(
   event: WrikeWebhookEvent,
 ): Promise<void> {
-  const r = getSharedRedis(); if (!r) return;
+  const r = getSharedRedis();
+  if (!r) {
+    console.warn("[webhook] Redis unavailable — transition not stored, comment parser will backfill");
+    return;
+  }
 
   const eventDate = new Date(event.lastUpdatedDate);
   const score = Math.floor(eventDate.getTime() / 1000);

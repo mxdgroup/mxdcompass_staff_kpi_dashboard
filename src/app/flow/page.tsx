@@ -40,6 +40,20 @@ export default function FlowDetailsPage() {
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
 
+  async function resyncTask(taskId: string) {
+    const res = await fetch("/internal/kpis/api/sync/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? `Task resync failed (${res.status})`);
+      return;
+    }
+    fetchData(weekParam);
+  }
+
   const updateParams = useCallback(
     (updates: Record<string, string | null>) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -88,9 +102,21 @@ export default function FlowDetailsPage() {
 
   async function triggerSync() {
     setSyncing(true);
-    const res = await fetch("/internal/kpis/api/sync", { method: "POST" });
-    setSyncing(false);
-    if (res.ok) fetchData("current");
+    try {
+      const res = await fetch("/internal/kpis/api/sync/trigger", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error ?? `Sync failed (${res.status})`);
+      } else if (body.saveErrors?.length) {
+        setError(`Sync partial: ${body.saveErrors.join("; ")}`);
+      } else {
+        fetchData("current");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSyncing(false);
+    }
   }
 
   const filteredTickets = selectedClient
@@ -203,6 +229,7 @@ export default function FlowDetailsPage() {
             tickets={filteredTickets}
             showAssignee
             showClient={!selectedClient}
+            onResyncTask={resyncTask}
           />
         ) : (
           <TicketFlowDots
