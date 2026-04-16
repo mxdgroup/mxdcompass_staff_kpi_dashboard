@@ -1,7 +1,7 @@
 // Auto-set Wrike task dates when status changes
 //
-// Planned / In Progress  → set start date (if not already set)
-// In Review / Completed   → set due date (+ start if missing)
+// Planned / In Progress        → set start date (if not already set)
+// In Review / Client Pending / Completed → set due date (+ start if missing)
 
 import { getWrikeClient } from "./client";
 import { resolveWorkflowStatuses } from "./fetcher";
@@ -26,6 +26,7 @@ export async function applyDateForStatusChange(
   // match, which may be from the wrong workflow.
   const lowerInProgress = config.inProgressStatusName.toLowerCase();
   const lowerInReview = config.inReviewStatusName.toLowerCase();
+  const lowerClientPending = config.clientPendingStatusName.toLowerCase();
 
   const allInProgressIds = statuses.allStatuses
     .filter((s) => s.name.toLowerCase() === lowerInProgress)
@@ -35,13 +36,26 @@ export async function applyDateForStatusChange(
     .filter((s) => s.name.toLowerCase() === lowerInReview)
     .map((s) => s.id);
 
+  const allClientPendingIds = statuses.allStatuses
+    .filter((s) => s.name.toLowerCase() === lowerClientPending)
+    .map((s) => s.id);
+
+  // Exclude "New" from start triggers — plannedIds includes New for the flow
+  // dashboard, but only Planned/In Progress should set a start date.
+  const startTriggerIds = statuses.plannedIds.filter(
+    (id) => !statuses.allStatuses.some(
+      (s) => s.id === id && s.name.toLowerCase() === "new",
+    ),
+  );
+
   const isStartTrigger =
-    statuses.plannedIds.includes(newStatusId) ||
+    startTriggerIds.includes(newStatusId) ||
     allInProgressIds.includes(newStatusId);
 
   const isDueTrigger =
     statuses.completedIds.includes(newStatusId) ||
-    allInReviewIds.includes(newStatusId);
+    allInReviewIds.includes(newStatusId) ||
+    allClientPendingIds.includes(newStatusId);
 
   if (!isStartTrigger && !isDueTrigger) return;
 
@@ -76,7 +90,12 @@ export async function applyDateForStatusChange(
     return;
   }
 
-  // isDueTrigger — always set due date
+  // isDueTrigger — set due date if not already set (idempotent)
+  if (hasDue) {
+    console.log(`[webhook] Task ${event.taskId} already has due date ${task.dates.due}, skipping`);
+    return;
+  }
+
   // Wrike requires both start+due for type=Planned; sending only due
   // converts the task to Milestone and drops the start date.
   if (hasStart) {

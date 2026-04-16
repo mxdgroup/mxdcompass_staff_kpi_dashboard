@@ -7,6 +7,7 @@ import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 import { reactivateWebhook } from "@/lib/wrike/api";
+import { catchUpMissingDates } from "@/lib/wrike/dateCatchup";
 
 export const maxDuration = 300;
 
@@ -108,6 +109,14 @@ async function runSync(): Promise<NextResponse> {
     const flowSnapshot = await buildFlowSnapshot(week);
     await saveFlowSnapshot(flowSnapshot);
 
+    // Catch up missing dates for tasks in trigger statuses
+    let dateCatchup: { startDatesSet: number; dueDatesSet: number; scanned: number; errors: number } | null = null;
+    try {
+      dateCatchup = await catchUpMissingDates();
+    } catch (err) {
+      console.error("[cron/sync] Date catch-up failed:", err);
+    }
+
     const duration = Math.round((Date.now() - startTime) / 1000);
 
     // Notify on errors if Slack webhook is configured
@@ -125,6 +134,9 @@ async function runSync(): Promise<NextResponse> {
       webhookStale,
       webhookReactivated,
       flowTickets: flowSnapshot.tickets.length,
+      dateCatchup: dateCatchup
+        ? { scanned: dateCatchup.scanned, startDatesSet: dateCatchup.startDatesSet, dueDatesSet: dateCatchup.dueDatesSet, errors: dateCatchup.errors }
+        : null,
       summary: {
         tasksCompleted: snapshot.teamSummary.tasksCompleted,
         pipelineMovement: snapshot.teamSummary.pipelineMovement,
