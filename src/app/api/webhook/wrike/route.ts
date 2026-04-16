@@ -43,13 +43,19 @@ export async function POST(request: Request): Promise<Response> {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const promises: Promise<void>[] = [];
-  for (const event of events) {
-    if (event.eventType === "TaskStatusChanged") {
-      promises.push(storeTransition(event));
+  after(async () => {
+    try {
+      const promises: Promise<void>[] = [];
+      for (const event of events) {
+        if (event.eventType === "TaskStatusChanged") {
+          promises.push(storeTransition(event));
+        }
+      }
+      await Promise.all(promises);
+    } catch (err) {
+      console.error("[webhook] Failed to process events in after():", err);
     }
-  }
-  await Promise.all(promises);
+  });
 
   return new Response("OK", { status: 200 });
 }
