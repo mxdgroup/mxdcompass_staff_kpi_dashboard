@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import type { FlowApiResponse, FlowSnapshot } from "@/lib/types";
 import { config } from "@/lib/config";
+import { isArchived } from "@/lib/archive";
+import { computeFlowMetrics } from "@/lib/flowMetrics";
+import { getWeekRange } from "@/lib/week";
 import { NavTabs } from "@/components/NavTabs";
 import { WeekSelector } from "@/components/WeekSelector";
 import { AgingWipChart } from "@/components/AgingWipChart";
@@ -12,6 +15,7 @@ import { CycleTimeScatter } from "@/components/CycleTimeScatter";
 import { TicketFlowTable } from "@/components/TicketFlowTable";
 import { TicketFlowDots } from "@/components/TicketFlowDots";
 import { ClientSelector } from "@/components/ClientSelector";
+import { ArchivedToggle } from "@/components/ArchivedToggle";
 
 const validClientNames = new Set(config.clients.map((c) => c.name));
 
@@ -36,6 +40,7 @@ export default function FlowDetailsPage() {
   }, [clientParam, searchParams, router]);
 
   const [data, setData] = useState<FlowSnapshot | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -119,13 +124,29 @@ export default function FlowDetailsPage() {
     }
   }
 
-  const filteredTickets = selectedClient
-    ? data?.tickets.filter((t) => t.clientName === selectedClient) ?? []
-    : data?.tickets ?? [];
+  const visibleTickets = useMemo(() => {
+    const all = data?.tickets ?? [];
+    return showArchived ? all : all.filter((t) => !isArchived(t));
+  }, [data?.tickets, showArchived]);
 
-  const displayMetrics = selectedClient
-    ? data?.clientMetrics[selectedClient] ?? data?.agencyMetrics
-    : data?.agencyMetrics;
+  const filteredTickets = useMemo(
+    () =>
+      selectedClient
+        ? visibleTickets.filter((t) => t.clientName === selectedClient)
+        : visibleTickets,
+    [visibleTickets, selectedClient],
+  );
+
+  const displayMetrics = useMemo(() => {
+    if (!data) return undefined;
+    if (showArchived) {
+      return selectedClient
+        ? data.clientMetrics[selectedClient] ?? data.agencyMetrics
+        : data.agencyMetrics;
+    }
+    const range = getWeekRange(data.week);
+    return computeFlowMetrics(filteredTickets, range.start, range.end);
+  }, [data, showArchived, selectedClient, filteredTickets]);
 
   const resolvedWeek = weekParam === "current"
     ? (data?.week ?? "current")
@@ -176,6 +197,7 @@ export default function FlowDetailsPage() {
         </div>
         <div className="flex items-center gap-3">
           <WeekSelector currentWeek={resolvedWeek} onWeekChange={handleWeekChange} />
+          <ArchivedToggle checked={showArchived} onChange={setShowArchived} />
           <button
             onClick={triggerSync}
             disabled={syncing}
