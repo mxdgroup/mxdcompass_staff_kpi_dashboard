@@ -140,9 +140,16 @@ export async function saveSnapshot(
   }
 
   // Local file fallback (non-atomic, acceptable for dev)
-  await kvSet(key, json, TTL_SECONDS);
-  await kvSet(LATEST_KEY, snapshot.week);
-  return { saved: true };
+  // P30: Wrap in try-catch — Vercel's read-only FS will throw
+  try {
+    await kvSet(key, json, TTL_SECONDS);
+    await kvSet(LATEST_KEY, snapshot.week);
+    return { saved: true };
+  } catch (err) {
+    const reason = `Local file write failed: ${err instanceof Error ? err.message : String(err)}`;
+    console.warn(`[storage] ${reason}`);
+    return { saved: false, reason };
+  }
 }
 
 export async function getSnapshot(week: string): Promise<WeeklySnapshot | null> {
@@ -230,6 +237,10 @@ export interface CachedWorkflowStatuses {
   returnForReviewId: string | null;
   clientReviewId: string | null;
   completedIds: string[];
+  plannedIds: string[];
+  inProgressId: string | null;
+  inReviewId: string | null;
+  clientPendingId: string | null;
   allStatuses: Array<{ id: string; name: string; group: string }>;
 }
 
