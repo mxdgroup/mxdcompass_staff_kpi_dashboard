@@ -129,6 +129,52 @@ export default function DashboardPage() {
   const snap = weeklyData?.current ?? null;
   const hasAnyData = !!snap || !!flowData;
 
+  // Hooks must run unconditionally on every render — keep above the
+  // early returns below or React throws "Rendered more hooks than during
+  // the previous render" once loading flips to false.
+  const weekRange = useMemo(
+    () => (flowData ? getWeekRange(flowData.week) : null),
+    [flowData],
+  );
+
+  const visibleTickets = useMemo(() => {
+    const all = flowData?.tickets ?? [];
+    return showArchived ? all : all.filter((t) => !isArchived(t));
+  }, [flowData?.tickets, showArchived]);
+
+  const filteredTickets = useMemo(
+    () =>
+      selectedClient
+        ? visibleTickets.filter((t) => t.clientName === selectedClient)
+        : visibleTickets,
+    [visibleTickets, selectedClient],
+  );
+
+  const displayFlowMetrics = useMemo(() => {
+    if (!flowData) return null;
+    if (showArchived) {
+      return selectedClient
+        ? flowData.clientMetrics[selectedClient] ?? flowData.agencyMetrics
+        : flowData.agencyMetrics;
+    }
+    if (!weekRange) return null;
+    return computeFlowMetrics(filteredTickets, weekRange.start, weekRange.end);
+  }, [flowData, showArchived, selectedClient, filteredTickets, weekRange]);
+
+  const displayClientMetrics = useMemo(() => {
+    if (!flowData) return undefined;
+    if (showArchived) return flowData.clientMetrics;
+    if (!weekRange) return undefined;
+    const out: Record<string, FlowMetrics> = {};
+    for (const client of config.clients) {
+      const ts = visibleTickets.filter((t) => t.clientName === client.name);
+      if (ts.length > 0) {
+        out[client.name] = computeFlowMetrics(ts, weekRange.start, weekRange.end);
+      }
+    }
+    return out;
+  }, [flowData, showArchived, visibleTickets, weekRange]);
+
   // Loading skeleton
   if (loading) {
     return (
@@ -197,51 +243,6 @@ export default function DashboardPage() {
       </main>
     );
   }
-
-  // --- Filtered data based on selected client + archive toggle ---
-
-  const weekRange = useMemo(
-    () => (flowData ? getWeekRange(flowData.week) : null),
-    [flowData],
-  );
-
-  const visibleTickets = useMemo(() => {
-    const all = flowData?.tickets ?? [];
-    return showArchived ? all : all.filter((t) => !isArchived(t));
-  }, [flowData?.tickets, showArchived]);
-
-  const filteredTickets = useMemo(
-    () =>
-      selectedClient
-        ? visibleTickets.filter((t) => t.clientName === selectedClient)
-        : visibleTickets,
-    [visibleTickets, selectedClient],
-  );
-
-  const displayFlowMetrics = useMemo(() => {
-    if (!flowData) return null;
-    if (showArchived) {
-      return selectedClient
-        ? flowData.clientMetrics[selectedClient] ?? flowData.agencyMetrics
-        : flowData.agencyMetrics;
-    }
-    if (!weekRange) return null;
-    return computeFlowMetrics(filteredTickets, weekRange.start, weekRange.end);
-  }, [flowData, showArchived, selectedClient, filteredTickets, weekRange]);
-
-  const displayClientMetrics = useMemo(() => {
-    if (!flowData) return undefined;
-    if (showArchived) return flowData.clientMetrics;
-    if (!weekRange) return undefined;
-    const out: Record<string, FlowMetrics> = {};
-    for (const client of config.clients) {
-      const ts = visibleTickets.filter((t) => t.clientName === client.name);
-      if (ts.length > 0) {
-        out[client.name] = computeFlowMetrics(ts, weekRange.start, weekRange.end);
-      }
-    }
-    return out;
-  }, [flowData, showArchived, visibleTickets, weekRange]);
 
   const displayTeamSummary = selectedClient ? null : snap?.teamSummary ?? null;
 

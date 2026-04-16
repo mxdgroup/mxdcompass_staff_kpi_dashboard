@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import { computePercentile } from "./math";
 
-export const STAGE_ORDER = [
+const STAGE_ORDER = [
   "New",
   "Planned",
   "In Progress",
@@ -18,8 +18,8 @@ export const STAGE_ORDER = [
   "Completed",
 ];
 
-export const ACTIVE_STAGES = new Set(["In Progress"]);
-export const AGING_THRESHOLD_HOURS = 5 * 24;
+const ACTIVE_STAGES = new Set(["In Progress"]);
+const AGING_THRESHOLD_HOURS = 5 * 24;
 
 export function normalizeStage(name: string): string {
   const lower = name.toLowerCase();
@@ -112,7 +112,7 @@ export function computeFlowMetrics(
   };
 }
 
-export function buildDailyFlow(
+function buildDailyFlow(
   tickets: TicketFlowEntry[],
   weekStart: string,
   weekEnd: string,
@@ -150,10 +150,7 @@ export function buildDailyFlow(
   return days;
 }
 
-// Per-employee metric portion: caller adds name/contactId/role/tickets fields.
-// Returns FlowMetrics extended with medianExecutionHours and avgEffortScore —
-// the EmployeeFlowMetrics fields that depend on the ticket set.
-export interface EmployeeMetricPortion extends FlowMetrics {
+interface EmployeeMetricPortion extends FlowMetrics {
   medianExecutionHours: number | null;
   avgEffortScore: number | null;
 }
