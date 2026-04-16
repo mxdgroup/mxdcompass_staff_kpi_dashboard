@@ -2,7 +2,15 @@
   "crons": [
     {
       "path": "/internal/kpis/api/cron/sync",
-      "schedule": "0 4 * * *"
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/internal/kpis/api/cron/sync",
+      "schedule": "20 2 * * *"
+    },
+    {
+      "path": "/internal/kpis/api/cron/sync",
+      "schedule": "0 12 * * *"
     }
   ]
 }
