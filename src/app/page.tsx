@@ -84,7 +84,10 @@ export default function DashboardPage() {
       if (!res.ok) {
         setError(body.error ?? `Sync failed (${res.status})`);
       } else if (body.saveErrors?.length) {
-        setError(`Sync partial: ${body.saveErrors.join("; ")}`);
+        const folderInfo = body.flowFolderErrors?.length
+          ? ` Wrike folder errors: ${body.flowFolderErrors.join("; ")}`
+          : "";
+        setError(`Sync partial: ${body.saveErrors.join("; ")}${folderInfo}`);
       } else {
         fetchData("current");
       }
