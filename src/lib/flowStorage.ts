@@ -52,10 +52,17 @@ export async function saveFlowSnapshot(
   }
 
   // Local file fallback
-  ensureDataDir();
-  fs.writeFileSync(localPath(key), json, "utf-8");
-  fs.writeFileSync(localPath(FLOW_LATEST_KEY), JSON.stringify(snapshot.week), "utf-8");
-  return { saved: true };
+  // P30: Wrap in try-catch — Vercel's read-only FS will throw
+  try {
+    ensureDataDir();
+    fs.writeFileSync(localPath(key), json, "utf-8");
+    fs.writeFileSync(localPath(FLOW_LATEST_KEY), JSON.stringify(snapshot.week), "utf-8");
+    return { saved: true };
+  } catch (err) {
+    const reason = `Local file write failed: ${err instanceof Error ? err.message : String(err)}`;
+    console.warn(`[flowStorage] ${reason}`);
+    return { saved: false, reason };
+  }
 }
 
 export async function getFlowSnapshot(

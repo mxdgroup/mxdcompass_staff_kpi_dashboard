@@ -1,4 +1,5 @@
-import { loadOverridesFromRedis } from "@/lib/bootstrap";
+import { loadOverridesFromRedis, getUnmappedMembers } from "@/lib/bootstrap";
+import { config } from "@/lib/config";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
@@ -36,7 +37,37 @@ export async function POST(request: Request) {
 async function runSync(): Promise<NextResponse> {
   const startTime = Date.now();
 
-  await loadOverridesFromRedis();
+  // P22: Fail if overrides can't load — blank contact IDs produce empty snapshots
+  const overrideResult = await loadOverridesFromRedis();
+  if (!overrideResult.loaded) {
+    const message = `Config override load failed: ${overrideResult.error}`;
+    console.error(`[cron/sync] ${message}`);
+    const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
+    if (webhookUrl) {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `KPI Sync FAILED: ${message}` }),
+      }).catch(() => {});
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+
+  // P23: Reject if all members are unmapped (bootstrap never ran or overrides corrupt)
+  const unmapped = getUnmappedMembers();
+  if (unmapped.length === config.team.length) {
+    const message = "All team members unmapped — run bootstrap first";
+    console.error(`[cron/sync] ${message}`);
+    const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
+    if (webhookUrl) {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `KPI Sync FAILED: ${message}` }),
+      }).catch(() => {});
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   // Acquire sync guard (P1: owner-token based lock)
   const guard = await acquireSyncGuard();

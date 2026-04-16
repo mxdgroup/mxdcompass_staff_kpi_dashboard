@@ -1,4 +1,5 @@
-import { loadOverridesFromRedis } from "@/lib/bootstrap";
+import { loadOverridesFromRedis, getUnmappedMembers } from "@/lib/bootstrap";
+import { config } from "@/lib/config";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
@@ -16,7 +17,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  await loadOverridesFromRedis();
+  // P22: Fail if overrides can't load — blank contact IDs produce empty snapshots
+  const overrideResult = await loadOverridesFromRedis();
+  if (!overrideResult.loaded) {
+    return NextResponse.json(
+      { error: `Config override load failed: ${overrideResult.error}` },
+      { status: 500 },
+    );
+  }
+
+  // P23: Reject if all members are unmapped (bootstrap never ran or overrides corrupt)
+  const unmapped = getUnmappedMembers();
+  if (unmapped.length === config.team.length) {
+    return NextResponse.json(
+      { error: "All team members unmapped — run bootstrap first" },
+      { status: 500 },
+    );
+  }
+
   const startTime = Date.now();
 
   const guard = await acquireSyncGuard();

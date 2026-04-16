@@ -9,6 +9,7 @@ import type {
   WrikeCustomStatus,
 } from "./types";
 import { config } from "../config";
+import { getCachedWorkflowStatuses, setCachedWorkflowStatuses } from "../storage";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,8 +42,31 @@ const STATUS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let _cachedStatuses: { data: ResolvedStatuses; cachedAt: number } | undefined;
 
 export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
+  // Check in-memory cache first
   if (_cachedStatuses && Date.now() - _cachedStatuses.cachedAt < STATUS_CACHE_TTL_MS) {
     return _cachedStatuses.data;
+  }
+
+  // P25: Check Redis cache on cold start before hitting Wrike API
+  try {
+    const cached = await getCachedWorkflowStatuses();
+    if (cached) {
+      const resolved: ResolvedStatuses = {
+        returnForReviewId: cached.returnForReviewId ?? undefined,
+        clientReviewId: cached.clientReviewId ?? undefined,
+        completedIds: cached.completedIds,
+        plannedIds: cached.plannedIds ?? [],
+        inProgressId: cached.inProgressId ?? undefined,
+        inReviewId: cached.inReviewId ?? undefined,
+        clientPendingId: cached.clientPendingId ?? undefined,
+        allStatuses: cached.allStatuses as WrikeCustomStatus[],
+      };
+      _cachedStatuses = { data: resolved, cachedAt: Date.now() };
+      console.log("[fetcher] Loaded workflow statuses from Redis cache");
+      return resolved;
+    }
+  } catch {
+    // Redis read failed — fall through to Wrike API
   }
 
   const client = getWrikeClient();
@@ -118,6 +142,23 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
     allStatuses,
   };
   _cachedStatuses = { data: resolved, cachedAt: Date.now() };
+
+  // P25: Persist to Redis so other instances / cold starts can reuse
+  try {
+    await setCachedWorkflowStatuses({
+      returnForReviewId: resolved.returnForReviewId ?? null,
+      clientReviewId: resolved.clientReviewId ?? null,
+      completedIds: resolved.completedIds,
+      plannedIds: resolved.plannedIds,
+      inProgressId: resolved.inProgressId ?? null,
+      inReviewId: resolved.inReviewId ?? null,
+      clientPendingId: resolved.clientPendingId ?? null,
+      allStatuses: resolved.allStatuses,
+    });
+  } catch {
+    // Redis write failed — in-memory cache still works
+  }
+
   return resolved;
 }
 
