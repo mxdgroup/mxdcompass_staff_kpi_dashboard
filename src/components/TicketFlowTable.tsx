@@ -24,7 +24,20 @@ type SortKey =
   | "effort"
   | "currentStage"
   | "cycleTime"
+  | "maxActiveAge"
   | "assignee";
+
+const ACTIVE_SORT_STAGES = new Set(["Planned", "In Progress", "In Review", "Client Pending"]);
+
+function maxActiveStageHours(t: TicketFlowEntry): number {
+  let max = 0;
+  for (const sd of t.stageDurations) {
+    if (ACTIVE_SORT_STAGES.has(sd.stageName) && sd.durationHours > max) {
+      max = sd.durationHours;
+    }
+  }
+  return max;
+}
 
 function durationColor(hours: number): string {
   if (hours < 4) return "bg-green-50 text-green-700";
@@ -62,9 +75,9 @@ export function TicketFlowTable({
   showClient = false,
   onResyncTask,
 }: TicketFlowTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>("cycleTime");
+  const [sortKey, setSortKey] = useState<SortKey>("maxActiveAge");
   const [sortAsc, setSortAsc] = useState(false);
-  const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "completed">("active");
   const [syncingTaskId, setSyncingTaskId] = useState<string | null>(null);
 
   function toggleSort(key: SortKey) {
@@ -109,6 +122,9 @@ export function TicketFlowTable({
         break;
       case "cycleTime":
         cmp = (a.totalCycleHours ?? 999) - (b.totalCycleHours ?? 999);
+        break;
+      case "maxActiveAge":
+        cmp = maxActiveStageHours(a) - maxActiveStageHours(b);
         break;
       case "assignee":
         cmp = a.assigneeName.localeCompare(b.assigneeName);
