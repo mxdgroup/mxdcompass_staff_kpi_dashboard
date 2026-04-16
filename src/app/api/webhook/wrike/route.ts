@@ -5,6 +5,7 @@ import {
   storeWebhookSecret,
   type WrikeWebhookEvent,
 } from "@/lib/wrike/webhook";
+import { applyDateForStatusChange } from "@/lib/wrike/dateWriter";
 
 export async function POST(request: Request): Promise<Response> {
   // --- HANDSHAKE ---
@@ -43,13 +44,28 @@ export async function POST(request: Request): Promise<Response> {
     return new Response("Bad Request", { status: 400 });
   }
 
+  const statusChangedEvents: WrikeWebhookEvent[] = [];
   const promises: Promise<void>[] = [];
   for (const event of events) {
     if (event.eventType === "TaskStatusChanged") {
       promises.push(storeTransition(event));
+      statusChangedEvents.push(event);
     }
   }
   await Promise.all(promises);
+
+  // Write dates back to Wrike after the response is sent
+  if (statusChangedEvents.length > 0) {
+    after(async () => {
+      for (const event of statusChangedEvents) {
+        try {
+          await applyDateForStatusChange(event);
+        } catch (err) {
+          console.error(`[webhook] Date write failed for task ${event.taskId}:`, err);
+        }
+      }
+    });
+  }
 
   return new Response("OK", { status: 200 });
 }
