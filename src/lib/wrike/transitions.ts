@@ -2,6 +2,9 @@ import { Redis } from "@upstash/redis";
 import { redisKeyForWeek, type TransitionEntry } from "./webhook";
 import { isRedisAvailable } from "../storage";
 
+/** Synthetic transitions injected by POST /api/sync/baseline use this author ID. */
+export const BASELINE_AUTHOR_ID = "baseline-sync";
+
 const hasRedis = isRedisAvailable();
 let _redis: Redis | null = null;
 function getRedis(): Redis | null {
@@ -90,7 +93,11 @@ export async function getPipelineMovement(
   movedTaskIds: Set<string>; // P20: Per-task movement tracking
 }> {
   const { startTs, endTs } = parseISORange(dateRange);
-  const transitions = await getTransitionsInRange(startTs, endTs);
+  const allTransitions = await getTransitionsInRange(startTs, endTs);
+  // Exclude synthetic baseline transitions from weekly metrics
+  const transitions = allTransitions.filter(
+    (t) => t.eventAuthorId !== BASELINE_AUTHOR_ID,
+  );
 
   const tasksByMember = new Map<string, Set<string>>();
   const allTasks = new Set<string>();
@@ -121,7 +128,11 @@ export async function getReturnForReviewCount(
   tasks: string[];
 }> {
   const { startTs, endTs } = parseISORange(dateRange);
-  const transitions = await getTransitionsInRange(startTs, endTs);
+  const allTransitions = await getTransitionsInRange(startTs, endTs);
+  // Exclude synthetic baseline transitions from weekly metrics
+  const transitions = allTransitions.filter(
+    (t) => t.eventAuthorId !== BASELINE_AUTHOR_ID,
+  );
 
   const matched = transitions.filter(
     (t) => t.toStatusId === returnForReviewStatusId,
@@ -151,7 +162,11 @@ export async function getApprovalCycleTime(
   completedStatusIds: string[],
 ): Promise<{ medianHours: number | null; times: number[] }> {
   const { startTs, endTs } = parseISORange(dateRange);
-  const transitions = await getTransitionsInRange(startTs, endTs);
+  const allTransitions = await getTransitionsInRange(startTs, endTs);
+  // Exclude synthetic baseline transitions from weekly metrics
+  const transitions = allTransitions.filter(
+    (t) => t.eventAuthorId !== BASELINE_AUTHOR_ID,
+  );
 
   // Group transitions by taskId, sorted by timestamp
   const byTask = new Map<string, TransitionEntry[]>();
