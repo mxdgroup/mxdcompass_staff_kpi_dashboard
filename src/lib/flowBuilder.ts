@@ -446,11 +446,13 @@ export async function patchFlowSnapshotForTask(
   const now = new Date();
   const client = getWrikeClient();
 
-  // Fetch just this task + its comments from Wrike API (2 requests)
+  // Fetch just this task + its comments from Wrike API (2 requests).
+  // NOTE: GET /tasks/{id} no longer accepts a `fields` parameter — Wrike rejects
+  // every identifier (customFields, responsibleIds, briefDescription, …) with
+  // HTTP 400. Those fields are now included in the default response body, so we
+  // omit the parameter entirely.
   const [tasks, comments] = await Promise.all([
-    client.get<WrikeTask>(`/tasks/${taskId}`, {
-      fields: JSON.stringify(["customFields", "responsibleIds", "briefDescription"]),
-    }),
+    client.get<WrikeTask>(`/tasks/${taskId}`),
     client.get<WrikeComment>(`/tasks/${taskId}/comments`),
   ]);
 
