@@ -16,6 +16,7 @@ import { WeekSelector } from "@/components/WeekSelector";
 import { AgencyOverview } from "@/components/AgencyOverview";
 import { ClientChips } from "@/components/ClientChips";
 import { TicketFlowTable } from "@/components/TicketFlowTable";
+import { TicketFlowDots } from "@/components/TicketFlowDots";
 import TeamMemberCard from "@/components/TeamMemberCard";
 import { AttentionItems } from "@/components/AttentionItems";
 import { ArchivedToggle } from "@/components/ArchivedToggle";
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const [week, setWeek] = useState("current");
   const [selectedClient, setSelectedClient] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [ticketView, setTicketView] = useState<"tickets" | "flow">("tickets");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -374,12 +376,40 @@ export default function DashboardPage() {
           <span className="text-xs text-gray-400">{filteredTickets.length} tickets</span>
         </div>
         <div className="rounded-xl bg-surface-raised p-5 shadow-[var(--shadow-card)] border border-gray-100/80">
-          <TicketFlowTable
-            tickets={filteredTickets}
-            showAssignee
-            showClient={!selectedClient}
-            onResyncTask={resyncTask}
-          />
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[13px] font-medium text-gray-400 tracking-wide">
+              All Tickets
+            </h3>
+            <div className="flex gap-1">
+              {([["tickets", "Tickets"], ["flow", "Ticket Flow"]] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setTicketView(key)}
+                  className={`px-2.5 py-1 text-xs rounded-md font-medium ${
+                    ticketView === key
+                      ? "bg-gray-900 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {ticketView === "tickets" ? (
+            <TicketFlowTable
+              tickets={filteredTickets}
+              showAssignee
+              showClient={!selectedClient}
+              onResyncTask={resyncTask}
+            />
+          ) : (
+            <TicketFlowDots
+              tickets={filteredTickets}
+              showAssignee
+              showClient={!selectedClient}
+            />
+          )}
         </div>
       </section>
 
