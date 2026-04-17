@@ -23,7 +23,6 @@ import { getSharedRedis } from "../storage";
 import { getWrikeClient } from "./client";
 
 const WEBHOOK_ID_KEY = "kpi:wrike:webhook_id";
-const ACCOUNT_ID_KEY = "kpi:wrike:account_id";
 const WEBHOOK_PATH = "/internal/kpis/api/webhook/wrike";
 const TARGET_EVENTS = ["TaskStatusChanged"];
 
@@ -58,38 +57,6 @@ export function getExpectedHookUrl(): string | null {
   return null;
 }
 
-async function resolveAccountId(
-  hint: WrikeWebhook[] = [],
-): Promise<string | null> {
-  const envId = process.env.WRIKE_ACCOUNT_ID;
-  if (envId) return envId;
-
-  const redis = getSharedRedis();
-  if (redis) {
-    const cached = await redis.get<string>(ACCOUNT_ID_KEY);
-    if (cached) return cached;
-  }
-
-  const fromHint = hint.find((w) => w.accountId)?.accountId;
-  if (fromHint) {
-    if (redis) await redis.set(ACCOUNT_ID_KEY, fromHint);
-    return fromHint;
-  }
-
-  // No existing webhook to crib from — fall back to /contacts?me=true.
-  try {
-    const contacts = await getWrikeClient().get<{ accountId?: string }>(
-      "/contacts",
-      { me: true },
-    );
-    const fromContact = contacts[0]?.accountId;
-    if (fromContact && redis) await redis.set(ACCOUNT_ID_KEY, fromContact);
-    return fromContact ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResult> {
   const client = getWrikeClient();
   const redis = getSharedRedis();
@@ -120,47 +87,71 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
   }
 
   const match = existing.find((w) => w.hookUrl === expectedUrl);
+  const deploymentHost = safeHost(expectedUrl);
 
-  if (match) {
-    if (match.status === "Active") {
-      if (redis) await redis.set(WEBHOOK_ID_KEY, match.id);
-      return { action: "noop", webhookId: match.id, hookUrl: expectedUrl };
+  // Clean up sibling webhooks whose hookUrl points at this deployment host
+  // but a wrong path. Runs on every reconciliation, so stale entries from
+  // base-path renames get removed the first time we notice them.
+  async function cleanupStaleSiblings(keepId: string | null): Promise<string[]> {
+    const cleaned: string[] = [];
+    if (!deploymentHost) return cleaned;
+    for (const w of existing) {
+      if (w.id === keepId) continue;
+      const host = safeHost(w.hookUrl ?? "");
+      if (host === deploymentHost && w.hookUrl !== expectedUrl) {
+        try {
+          await client.delete(`/webhooks/${w.id}`);
+          cleaned.push(w.id);
+        } catch (err) {
+          console.warn(
+            `[webhookRegistrar] Failed to clean up stale webhook ${w.id}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
     }
-    // Suspended or unknown → reactivate.
-    try {
-      await client.put(`/webhooks/${match.id}`, { status: "Active" });
-      if (redis) await redis.set(WEBHOOK_ID_KEY, match.id);
-      return {
-        action: match.status === "Suspended" ? "reactivated" : "adopted",
-        webhookId: match.id,
-        hookUrl: expectedUrl,
-      };
-    } catch (err) {
-      return {
-        action: "failed",
-        webhookId: match.id,
-        hookUrl: expectedUrl,
-        reason: `Reactivate failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
+    return cleaned;
   }
 
-  // No webhook pointing at the right URL. Register a fresh one, then clean up
-  // stale siblings (other webhooks for this app with wrong paths).
-  const accountId = await resolveAccountId(existing);
-  if (!accountId) {
+  if (match) {
+    const action: WebhookAction =
+      match.status === "Active"
+        ? "noop"
+        : match.status === "Suspended"
+          ? "reactivated"
+          : "adopted";
+
+    if (match.status !== "Active") {
+      try {
+        await client.put(`/webhooks/${match.id}`, { status: "Active" });
+      } catch (err) {
+        return {
+          action: "failed",
+          webhookId: match.id,
+          hookUrl: expectedUrl,
+          reason: `Reactivate failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+
+    if (redis) await redis.set(WEBHOOK_ID_KEY, match.id);
+    const cleanedUp = await cleanupStaleSiblings(match.id);
     return {
-      action: "failed",
-      webhookId: null,
+      action,
+      webhookId: match.id,
       hookUrl: expectedUrl,
-      reason: "Could not resolve Wrike account ID (set WRIKE_ACCOUNT_ID)",
+      cleanedUp: cleanedUp.length > 0 ? cleanedUp : undefined,
     };
   }
 
+  // No webhook pointing at the right URL — register a fresh one.
+  //
+  // POST /webhooks creates an account-scoped webhook under the token's
+  // account. /accounts/{id}/webhooks returns method_not_found.
   let created: WrikeWebhook | undefined;
   try {
     const response = await client.post<WrikeWebhook>(
-      `/accounts/${accountId}/webhooks`,
+      "/webhooks",
       {
         hookUrl: expectedUrl,
         events: JSON.stringify(TARGET_EVENTS),
@@ -181,33 +172,12 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
       action: "failed",
       webhookId: null,
       hookUrl: expectedUrl,
-      reason: "POST /accounts/{id}/webhooks returned no id",
+      reason: "POST /webhooks returned no id",
     };
   }
 
   if (redis) await redis.set(WEBHOOK_ID_KEY, created.id);
-
-  // Cleanup: delete sibling webhooks whose hookUrl points at our deployment
-  // domain but a wrong path. Leaves external webhooks alone.
-  const cleanedUp: string[] = [];
-  const deploymentHost = safeHost(expectedUrl);
-  if (deploymentHost) {
-    for (const w of existing) {
-      if (w.id === created.id) continue;
-      const host = safeHost(w.hookUrl ?? "");
-      if (host === deploymentHost && w.hookUrl !== expectedUrl) {
-        try {
-          await client.delete(`/webhooks/${w.id}`);
-          cleanedUp.push(w.id);
-        } catch (err) {
-          console.warn(
-            `[webhookRegistrar] Failed to clean up stale webhook ${w.id}:`,
-            err instanceof Error ? err.message : err,
-          );
-        }
-      }
-    }
-  }
+  const cleanedUp = await cleanupStaleSiblings(created.id);
 
   return {
     action: "reregistered",
