@@ -228,6 +228,45 @@ export async function releaseSyncGuard(owner: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Catchup Guard — prevents overlapping catch-up cron runs
+// ---------------------------------------------------------------------------
+
+const CATCHUP_GUARD_KEY = "kpi:catchup:running";
+const CATCHUP_GUARD_TTL = 600; // 2x maxDuration — lock outlives the function
+
+export interface CatchupGuardResult {
+  acquired: boolean;
+  owner: string;
+}
+
+export async function acquireCatchupGuard(): Promise<CatchupGuardResult> {
+  if (!hasRedis) {
+    if (process.env.VERCEL) {
+      console.error("[storage] Redis unavailable in production — catchup guard failed closed");
+      return { acquired: false, owner: "" };
+    }
+    return { acquired: true, owner: "local" };
+  }
+
+  const owner = crypto.randomUUID();
+  const r = getRedis()!;
+  const result = await r.set(CATCHUP_GUARD_KEY, owner, { ex: CATCHUP_GUARD_TTL, nx: true });
+  return { acquired: result === "OK", owner };
+}
+
+export async function releaseCatchupGuard(owner: string): Promise<void> {
+  if (!hasRedis || owner === "local") return;
+  const r = getRedis()!;
+
+  const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
+  try {
+    await r.eval(script, [CATCHUP_GUARD_KEY], [owner]);
+  } catch (err) {
+    console.warn("[storage] Lua eval failed; letting catchup lock expire via TTL:", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Workflow Cache
 // ---------------------------------------------------------------------------
 

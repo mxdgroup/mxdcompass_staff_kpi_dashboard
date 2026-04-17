@@ -7,7 +7,6 @@ import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 import { ensureWebhookRegistered } from "@/lib/wrike/webhookRegistrar";
-import { catchUpMissingDates } from "@/lib/wrike/dateCatchup";
 import { initFolderCommentCache, clearFolderCommentCache } from "@/lib/wrike/fetcher";
 
 export const maxDuration = 300;
@@ -124,36 +123,13 @@ async function runSync(): Promise<NextResponse> {
     const flowSnapshot = await buildFlowSnapshot(week);
     await saveFlowSnapshot(flowSnapshot);
 
-    // Catch up missing dates for tasks in trigger statuses.
-    // Soft deadline of 60s protects the 300s function budget — the catch-up
-    // is idempotent, so the next cron picks up any skipped folders.
-    let dateCatchup: {
-      startDatesSet: number;
-      dueDatesSet: number;
-      scanned: number;
-      errors: number;
-      deadlineReached: boolean;
-      foldersProcessed: number;
-      foldersTotal: number;
-    } | null = null;
-    try {
-      dateCatchup = await catchUpMissingDates(Date.now() + 60_000);
-    } catch (err) {
-      console.error("[cron/sync] Date catch-up failed:", err);
-    }
-
     const duration = Math.round((Date.now() - startTime) / 1000);
 
-    // Notify on errors if Slack webhook is configured
-    const catchupDeadlineHit = dateCatchup?.deadlineReached ?? false;
     const registrationFailed = webhookRegistration.action === "failed";
     const hasErrors =
-      snapshot.memberErrors.length > 0 ||
-      webhookStale ||
-      catchupDeadlineHit ||
-      registrationFailed;
+      snapshot.memberErrors.length > 0 || webhookStale || registrationFailed;
     if (hasErrors && process.env.NOTIFICATION_WEBHOOK_URL) {
-      await notifySlack(snapshot, webhookStale, webhookRegistration, duration, dateCatchup).catch(() => {});
+      await notifySlack(snapshot, webhookStale, webhookRegistration, duration).catch(() => {});
     }
 
     return NextResponse.json({
@@ -171,17 +147,6 @@ async function runSync(): Promise<NextResponse> {
         cleanedUp: webhookRegistration.cleanedUp,
       },
       flowTickets: flowSnapshot.tickets.length,
-      dateCatchup: dateCatchup
-        ? {
-            scanned: dateCatchup.scanned,
-            startDatesSet: dateCatchup.startDatesSet,
-            dueDatesSet: dateCatchup.dueDatesSet,
-            errors: dateCatchup.errors,
-            deadlineReached: dateCatchup.deadlineReached,
-            foldersProcessed: dateCatchup.foldersProcessed,
-            foldersTotal: dateCatchup.foldersTotal,
-          }
-        : null,
       summary: {
         tasksCompleted: snapshot.teamSummary.tasksCompleted,
         pipelineMovement: snapshot.teamSummary.pipelineMovement,
@@ -214,7 +179,6 @@ async function notifySlack(
   webhookStale: boolean,
   registration: import("@/lib/wrike/webhookRegistrar").WebhookRegistrationResult,
   duration: number,
-  dateCatchup: { deadlineReached: boolean; foldersProcessed: number; foldersTotal: number } | null,
 ): Promise<void> {
   const url = process.env.NOTIFICATION_WEBHOOK_URL;
   if (!url) return;
@@ -240,11 +204,6 @@ async function notifySlack(
   if (webhookStale && registration.action === "noop") {
     issues.push(
       "Wrike webhook registered + Active but no events in 48h — check dashboards for delivery failures",
-    );
-  }
-  if (dateCatchup?.deadlineReached) {
-    issues.push(
-      `Date catch-up hit soft deadline — processed ${dateCatchup.foldersProcessed}/${dateCatchup.foldersTotal} folders; next cron will resume`,
     );
   }
   for (const err of snapshot.memberErrors) {
