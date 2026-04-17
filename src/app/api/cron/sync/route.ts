@@ -6,7 +6,7 @@ import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
-import { reactivateWebhook } from "@/lib/wrike/api";
+import { ensureWebhookRegistered } from "@/lib/wrike/webhookRegistrar";
 import { catchUpMissingDates } from "@/lib/wrike/dateCatchup";
 import { initFolderCommentCache, clearFolderCommentCache } from "@/lib/wrike/fetcher";
 
@@ -93,15 +93,27 @@ async function runSync(): Promise<NextResponse> {
   try {
     initFolderCommentCache();
 
-    // Check webhook health and auto-reactivate if stale
+    // Webhook event-flow health (are events actually arriving?)
     // P26: Treat missing timestamp as stale (first deploy, Redis flush, or dead webhook)
     const lastEvent = await getWebhookLastEvent();
     const webhookStale =
       lastEvent === null || Date.now() - lastEvent * 1000 > 48 * 60 * 60 * 1000;
 
-    let webhookReactivated = false;
-    if (webhookStale) {
-      webhookReactivated = await reactivateWebhook();
+    // Webhook registration health (is Wrike still configured to POST us?)
+    // Runs every cron — one API call; reconciles suspension / deletion / URL drift.
+    const webhookRegistration = await ensureWebhookRegistered();
+    if (webhookRegistration.action === "failed") {
+      console.error(
+        "[cron/sync] Webhook registration reconciliation failed:",
+        webhookRegistration.reason,
+      );
+    } else if (webhookRegistration.action !== "noop") {
+      console.log(
+        `[cron/sync] Webhook ${webhookRegistration.action}: ${webhookRegistration.webhookId}` +
+          (webhookRegistration.cleanedUp
+            ? ` (cleaned up ${webhookRegistration.cleanedUp.length} stale)`
+            : ""),
+      );
     }
 
     const week = getCurrentWeek();
@@ -134,9 +146,14 @@ async function runSync(): Promise<NextResponse> {
 
     // Notify on errors if Slack webhook is configured
     const catchupDeadlineHit = dateCatchup?.deadlineReached ?? false;
-    const hasErrors = snapshot.memberErrors.length > 0 || webhookStale || catchupDeadlineHit;
+    const registrationFailed = webhookRegistration.action === "failed";
+    const hasErrors =
+      snapshot.memberErrors.length > 0 ||
+      webhookStale ||
+      catchupDeadlineHit ||
+      registrationFailed;
     if (hasErrors && process.env.NOTIFICATION_WEBHOOK_URL) {
-      await notifySlack(snapshot, webhookStale, webhookReactivated, duration, dateCatchup).catch(() => {});
+      await notifySlack(snapshot, webhookStale, webhookRegistration, duration, dateCatchup).catch(() => {});
     }
 
     return NextResponse.json({
@@ -146,7 +163,13 @@ async function runSync(): Promise<NextResponse> {
       membersProcessed: snapshot.employees.length,
       memberErrors: snapshot.memberErrors.length,
       webhookStale,
-      webhookReactivated,
+      webhookRegistration: {
+        action: webhookRegistration.action,
+        webhookId: webhookRegistration.webhookId,
+        hookUrl: webhookRegistration.hookUrl,
+        reason: webhookRegistration.reason,
+        cleanedUp: webhookRegistration.cleanedUp,
+      },
       flowTickets: flowSnapshot.tickets.length,
       dateCatchup: dateCatchup
         ? {
@@ -189,7 +212,7 @@ async function runSync(): Promise<NextResponse> {
 async function notifySlack(
   snapshot: import("@/lib/types").WeeklySnapshot,
   webhookStale: boolean,
-  webhookReactivated: boolean,
+  registration: import("@/lib/wrike/webhookRegistrar").WebhookRegistrationResult,
   duration: number,
   dateCatchup: { deadlineReached: boolean; foldersProcessed: number; foldersTotal: number } | null,
 ): Promise<void> {
@@ -197,10 +220,27 @@ async function notifySlack(
   if (!url) return;
 
   const issues: string[] = [];
-  if (webhookStale && webhookReactivated) {
-    issues.push("Wrike webhook was stale (no events in 48h) — auto-reactivated successfully");
-  } else if (webhookStale) {
-    issues.push("Wrike webhook stale (no events in 48h) — auto-reactivation FAILED, manual intervention needed");
+  switch (registration.action) {
+    case "reactivated":
+      issues.push(`Wrike webhook was suspended — auto-reactivated (${registration.webhookId})`);
+      break;
+    case "reregistered":
+      issues.push(
+        `Wrike webhook was missing — re-registered as ${registration.webhookId}` +
+          (registration.cleanedUp ? ` (cleaned up ${registration.cleanedUp.length} stale)` : ""),
+      );
+      break;
+    case "adopted":
+      issues.push(`Wrike webhook adopted from existing record (${registration.webhookId})`);
+      break;
+    case "failed":
+      issues.push(`Wrike webhook reconciliation FAILED: ${registration.reason ?? "unknown"}`);
+      break;
+  }
+  if (webhookStale && registration.action === "noop") {
+    issues.push(
+      "Wrike webhook registered + Active but no events in 48h — check dashboards for delivery failures",
+    );
   }
   if (dateCatchup?.deadlineReached) {
     issues.push(

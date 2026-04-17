@@ -188,6 +188,120 @@ export class WrikeClient {
     }
   }
 
+  // ---------- single POST ----------
+
+  async post<T>(
+    path: string,
+    body: Record<string, string> = {},
+    attempt = 0,
+  ): Promise<WrikeApiResponse<T>> {
+    await this.throttle();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${BASE_URL}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: `bearer ${this.token}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(body).toString(),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+
+        if (isRetryable(response.status) && attempt < MAX_RETRIES) {
+          const retryAfter = getRetryAfterMs(response);
+          const backoff = jitteredBackoffMs(attempt);
+          await wait(retryAfter ? Math.max(retryAfter, backoff) : backoff);
+          return this.post<T>(path, body, attempt + 1);
+        }
+
+        const err = buildServiceError(
+          `Wrike API error ${response.status}: ${text.slice(0, 300)}`,
+          response.status,
+          text,
+        );
+        throw new Error(err.message);
+      }
+
+      return (await response.json()) as WrikeApiResponse<T>;
+    } catch (error: unknown) {
+      const isAbort =
+        error instanceof DOMException && error.name === "AbortError";
+      const isNetwork = error instanceof TypeError || isAbort;
+
+      if (isNetwork && attempt < MAX_RETRIES) {
+        await wait(jitteredBackoffMs(attempt));
+        return this.post<T>(path, body, attempt + 1);
+      }
+
+      if (isAbort) {
+        throw new Error(`Wrike API timeout: request exceeded ${REQUEST_TIMEOUT_MS}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // ---------- single DELETE ----------
+
+  async delete(path: string, attempt = 0): Promise<void> {
+    await this.throttle();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${BASE_URL}${path}`, {
+        method: "DELETE",
+        headers: { Authorization: `bearer ${this.token}` },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+
+        if (isRetryable(response.status) && attempt < MAX_RETRIES) {
+          const retryAfter = getRetryAfterMs(response);
+          const backoff = jitteredBackoffMs(attempt);
+          await wait(retryAfter ? Math.max(retryAfter, backoff) : backoff);
+          return this.delete(path, attempt + 1);
+        }
+
+        const err = buildServiceError(
+          `Wrike API error ${response.status}: ${text.slice(0, 300)}`,
+          response.status,
+          text,
+        );
+        throw new Error(err.message);
+      }
+    } catch (error: unknown) {
+      const isAbort =
+        error instanceof DOMException && error.name === "AbortError";
+      const isNetwork = error instanceof TypeError || isAbort;
+
+      if (isNetwork && attempt < MAX_RETRIES) {
+        await wait(jitteredBackoffMs(attempt));
+        return this.delete(path, attempt + 1);
+      }
+
+      if (isAbort) {
+        throw new Error(`Wrike API timeout: request exceeded ${REQUEST_TIMEOUT_MS}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   // ---------- paginated GET ----------
 
   async get<T>(

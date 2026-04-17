@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getFlowSnapshot, getFlowLatestWeek } from "@/lib/flowStorage";
-import { getWebhookLastEvent } from "@/lib/storage";
+import { getWebhookLastEvent, getSharedRedis } from "@/lib/storage";
+import { WEBHOOK_ID_KEY } from "@/lib/wrike/webhookRegistrar";
 
 /**
  * GET /api/sync/health
@@ -40,6 +41,11 @@ export async function GET() {
     lastWebhookEvent !== null &&
     Date.now() - lastWebhookEvent * 1000 < 48 * 60 * 60 * 1000;
 
+  const redis = getSharedRedis();
+  const registeredWebhookId = redis
+    ? await redis.get<string>(WEBHOOK_ID_KEY)
+    : null;
+
   return NextResponse.json({
     healthy: lastSyncedAt !== null && webhookHealthy,
     lastSyncedAt,
@@ -48,6 +54,7 @@ export async function GET() {
       ? new Date(lastWebhookEvent * 1000).toISOString()
       : null,
     webhookHealthy,
+    registeredWebhookId,
     trackedTasks,
     tasksByStatus,
     tasksByClient,
