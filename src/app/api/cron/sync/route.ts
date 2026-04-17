@@ -7,7 +7,12 @@ import { buildFlowSnapshot } from "@/lib/flowBuilder";
 import { saveFlowSnapshot } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 import { ensureWebhookRegistered } from "@/lib/wrike/webhookRegistrar";
-import { initFolderCommentCache, clearFolderCommentCache } from "@/lib/wrike/fetcher";
+import {
+  initFolderCommentCache,
+  clearFolderCommentCache,
+  initNullCompletedDateCounter,
+  reportNullCompletedDateCounter,
+} from "@/lib/wrike/fetcher";
 
 export const maxDuration = 300;
 
@@ -106,6 +111,7 @@ async function runSync(): Promise<NextResponse> {
 
   try {
     initFolderCommentCache();
+    initNullCompletedDateCounter();
     markStep("initFolderCommentCache");
 
     // Webhook event-flow health (are events actually arriving?)
@@ -198,6 +204,7 @@ async function runSync(): Promise<NextResponse> {
     }
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
+    reportNullCompletedDateCounter();
     clearFolderCommentCache();
     await releaseSyncGuard(guard.owner);
   }
