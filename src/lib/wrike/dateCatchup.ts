@@ -107,7 +107,7 @@ export async function catchUpMissingDates(
           if (!hasDue) dates.due = today;
           await client.put(`/tasks/${task.id}`, { dates: JSON.stringify(dates) });
           result.startDatesSet++;
-          console.log(`[dateCatchup] Set start date ${today} on task ${task.id} (${task.title})`);
+          console.log(`[dateCatchup] Set start date ${today} on task ${task.id}`);
         } else if (isDueTrigger && !hasDue) {
           if (hasStart) {
             const existingStart = task.dates.start!.slice(0, 10);
@@ -120,7 +120,7 @@ export async function catchUpMissingDates(
             });
           }
           result.dueDatesSet++;
-          console.log(`[dateCatchup] Set due date ${today} on task ${task.id} (${task.title})`);
+          console.log(`[dateCatchup] Set due date ${today} on task ${task.id}`);
         }
       } catch (err) {
         console.error(`[dateCatchup] Failed to set dates on task ${task.id}:`, err);

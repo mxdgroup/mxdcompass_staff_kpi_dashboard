@@ -11,6 +11,18 @@
     {
       "path": "/internal/kpis/api/cron/sync",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/internal/kpis/api/cron/catchup",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/internal/kpis/api/cron/catchup",
+      "schedule": "30 11 * * *"
+    },
+    {
+      "path": "/internal/kpis/api/cron/catchup",
+      "schedule": "30 19 * * *"
     }
   ]
 }
