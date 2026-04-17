@@ -19,9 +19,30 @@ import { getCachedWorkflowStatuses, setCachedWorkflowStatuses } from "../storage
 // (non-completed) tasks are NEVER filtered by age.
 // ---------------------------------------------------------------------------
 
+// Per-sync telemetry: unique task IDs with status=Completed but no completedDate
+// (the Wrike Feb–early-Mar 2026 migration cohort). initNullCompletedDateCounter
+// at sync start, reportNullCompletedDateCounter at end. Feeds Unit 5b decision
+// on whether to switch isCompletedBeyondCutoff to an updatedDate surrogate.
+let _nullCompletedDateTaskIds: Set<string> | null = null;
+
+export function initNullCompletedDateCounter(): void {
+  _nullCompletedDateTaskIds = new Set();
+}
+
+export function reportNullCompletedDateCounter(): void {
+  const count = _nullCompletedDateTaskIds?.size ?? 0;
+  console.log(
+    `[fetcher] null-completedDate completed-task count for this sync: ${count}`,
+  );
+  _nullCompletedDateTaskIds = null;
+}
+
 function isCompletedBeyondCutoff(task: WrikeTask): boolean {
   if (task.status !== "Completed") return false;
-  if (!task.completedDate) return false;
+  if (!task.completedDate) {
+    _nullCompletedDateTaskIds?.add(task.id);
+    return false;
+  }
   const ageMs = Date.now() - new Date(task.completedDate).getTime();
   return ageMs > COMPLETED_TASK_CUTOFF_DAYS * 24 * 60 * 60 * 1000;
 }
