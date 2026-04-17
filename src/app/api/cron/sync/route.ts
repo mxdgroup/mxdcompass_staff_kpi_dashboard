@@ -38,6 +38,20 @@ export async function POST(request: Request) {
 async function runSync(): Promise<NextResponse> {
   const startTime = Date.now();
 
+  // Per-step timing. Logs fire progressively so a Vercel 300s timeout still
+  // reveals which step exhausted the budget — a summary-only log never prints
+  // on 504. See docs/plans/2026-04-17-011-fix-sync-timeout-followups-plan.md
+  // Unit 5 for the measurement this feeds.
+  const timing: Record<string, number> = {};
+  let stepStart = startTime;
+  const markStep = (name: string) => {
+    const now = Date.now();
+    const ms = now - stepStart;
+    timing[name] = ms;
+    console.log(`[cron/sync/timing] step=${name} ms=${ms}`);
+    stepStart = now;
+  };
+
   // P22: Fail if overrides can't load — blank contact IDs produce empty snapshots
   const overrideResult = await loadOverridesFromRedis();
   if (!overrideResult.loaded) {
@@ -88,15 +102,18 @@ async function runSync(): Promise<NextResponse> {
       { status: 409 }
     );
   }
+  markStep("acquireSyncGuard");
 
   try {
     initFolderCommentCache();
+    markStep("initFolderCommentCache");
 
     // Webhook event-flow health (are events actually arriving?)
     // P26: Treat missing timestamp as stale (first deploy, Redis flush, or dead webhook)
     const lastEvent = await getWebhookLastEvent();
     const webhookStale =
       lastEvent === null || Date.now() - lastEvent * 1000 > 48 * 60 * 60 * 1000;
+    markStep("getWebhookLastEvent");
 
     // Webhook registration health (is Wrike still configured to POST us?)
     // Runs every cron — one API call; reconciles suspension / deletion / URL drift.
@@ -114,16 +131,24 @@ async function runSync(): Promise<NextResponse> {
             : ""),
       );
     }
+    markStep("ensureWebhookRegistered");
 
     const week = getCurrentWeek();
     const snapshot = await buildWeeklySnapshot(week);
+    markStep("buildWeeklySnapshot");
     await saveSnapshot(snapshot);
+    markStep("saveSnapshot");
 
     // Build flow dashboard snapshot
     const flowSnapshot = await buildFlowSnapshot(week);
+    markStep("buildFlowSnapshot");
     await saveFlowSnapshot(flowSnapshot);
+    markStep("saveFlowSnapshot");
 
     const duration = Math.round((Date.now() - startTime) / 1000);
+    console.log(
+      `[cron/sync/timing] total=${Date.now() - startTime}ms ${JSON.stringify(timing)}`,
+    );
 
     const registrationFailed = webhookRegistration.action === "failed";
     const hasErrors =
@@ -152,11 +177,15 @@ async function runSync(): Promise<NextResponse> {
         pipelineMovement: snapshot.teamSummary.pipelineMovement,
         returnForReview: snapshot.teamSummary.returnForReviewCount,
       },
+      timing,
     });
   } catch (err) {
     // P28: Slack alert on top-level sync failure
     const message = err instanceof Error ? err.message : String(err);
     console.error("[cron/sync] Top-level sync failure:", message);
+    console.log(
+      `[cron/sync/timing] total=${Date.now() - startTime}ms (failed) ${JSON.stringify(timing)}`,
+    );
     const webhookUrl = process.env.NOTIFICATION_WEBHOOK_URL;
     if (webhookUrl) {
       await fetch(webhookUrl, {
