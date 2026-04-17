@@ -35,7 +35,7 @@ export default function FlowDetailsPage() {
       const params = new URLSearchParams(searchParams.toString());
       params.delete("client");
       const qs = params.toString();
-      router.replace(qs ? `/flow?${qs}` : "/flow");
+      router.replace(qs ? `/flow?${qs}` : "/flow", { scroll: false });
     }
   }, [clientParam, searchParams, router]);
 
@@ -70,7 +70,7 @@ export default function FlowDetailsPage() {
         }
       }
       const qs = params.toString();
-      router.replace(qs ? `/flow?${qs}` : "/flow");
+      router.replace(qs ? `/flow?${qs}` : "/flow", { scroll: false });
     },
     [searchParams, router],
   );
