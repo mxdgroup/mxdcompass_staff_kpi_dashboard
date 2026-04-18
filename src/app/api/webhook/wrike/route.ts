@@ -71,12 +71,8 @@ export async function POST(request: Request): Promise<Response> {
       ? await redis.get<string>(WEBHOOK_ID_KEY)
       : null;
     const bodyWebhookIds = [...new Set(events.map((event) => event.webhookId))];
-    const matchingWebhook =
-      !!registeredWebhookId &&
-      bodyWebhookIds.length === 1 &&
-      bodyWebhookIds[0] === registeredWebhookId;
 
-    if (!trustedIp || !matchingWebhook) {
+    if (!trustedIp) {
       console.warn(
         `[webhook] Missing signature header — rejecting unsigned request (ip=${requestIp ?? "unknown"} webhookIds=${bodyWebhookIds.join(",") || "none"})`,
       );
@@ -86,8 +82,17 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
+    if (
+      registeredWebhookId &&
+      (bodyWebhookIds.length !== 1 || bodyWebhookIds[0] !== registeredWebhookId)
+    ) {
+      console.warn(
+        `[webhook] Unsigned delivery webhookId mismatch from trusted Wrike IP ${requestIp}; registered=${registeredWebhookId} body=${bodyWebhookIds.join(",") || "none"} — accepting fallback auth`,
+      );
+    }
+
     console.warn(
-      `[webhook] Missing signature header from trusted Wrike IP ${requestIp}; accepting fallback auth for webhook ${registeredWebhookId}`,
+      `[webhook] Missing signature header from trusted Wrike IP ${requestIp}; accepting fallback auth`,
     );
   }
 
