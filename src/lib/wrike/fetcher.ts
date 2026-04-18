@@ -354,11 +354,8 @@ export async function fetchWeeklyMemberData(
       .sort((a, b) => (a.status === "Completed" ? 1 : 0) - (b.status === "Completed" ? 1 : 0))
       .map((t) => t.id);
 
-    for (const taskId of unmappedTaskIds) {
-      // Wrike comments endpoint does NOT support updatedDate — fetch all
-      const taskComments = await client.get<WrikeComment>(
-        `/tasks/${taskId}/comments`,
-      );
+    const unmappedComments = await client.getCommentsByTaskIds(unmappedTaskIds);
+    for (const [taskId, taskComments] of unmappedComments) {
       mergeComments(taskId, taskComments);
     }
   }
@@ -485,20 +482,18 @@ export async function fetchClientTasks(
 
   // Fallback per-task comment fetch for unmapped tasks (same extended lookback).
   // Active tasks first so an interrupted loop still covers the most-relevant work.
-  const unmapped = tasks
+  const unmappedTaskIds = tasks
     .filter((t) => !mappedTaskIds.has(t.id))
-    .sort((a, b) => (a.status === "Completed" ? 1 : 0) - (b.status === "Completed" ? 1 : 0));
-  for (const task of unmapped) {
-    // Wrike comments endpoint does NOT support updatedDate — fetch all, filter in code
-    const allTaskComments = await client.get<WrikeComment>(
-      `/tasks/${task.id}/comments`,
-    );
+    .sort((a, b) => (a.status === "Completed" ? 1 : 0) - (b.status === "Completed" ? 1 : 0))
+    .map((t) => t.id);
+  const unmappedComments = await client.getCommentsByTaskIds(unmappedTaskIds);
+  for (const [taskId, allTaskComments] of unmappedComments) {
     const taskComments = allTaskComments.filter((c) => {
       const ts = new Date(c.createdDate ?? "").getTime();
       return ts >= commentCutoff;
     });
     if (taskComments.length > 0) {
-      commentsByTask.set(task.id, taskComments);
+      commentsByTask.set(taskId, taskComments);
     }
   }
 

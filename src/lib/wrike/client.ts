@@ -1,10 +1,13 @@
 // Wrike API v4 client with throttling, retry, and pagination
 
 import type { WrikeApiResponse } from "./types";
+import type { WrikeComment } from "./types";
 import { buildServiceError, isRetryable, getRetryAfterMs } from "./errorUtils";
 
 const BASE_URL = "https://www.wrike.com/api/v4";
-const MIN_REQUEST_INTERVAL_MS = 1100;
+// Wrike allows ~400 req/min. 180ms keeps us below that ceiling while letting
+// concurrent comment fetches overlap enough to fit inside Vercel's 300s budget.
+const MIN_REQUEST_INTERVAL_MS = 180;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 
@@ -347,6 +350,35 @@ export class WrikeClient {
     } while (nextPageToken);
 
     return all;
+  }
+
+  async getCommentsByTaskIds(
+    taskIds: string[],
+  ): Promise<Map<string, WrikeComment[]>> {
+    if (taskIds.length === 0) {
+      return new Map();
+    }
+
+    const commentsByTask = new Map<string, WrikeComment[]>();
+
+    await Promise.all(
+      taskIds.map(async (taskId) => {
+        const comments = await this.get<WrikeComment>(`/tasks/${taskId}/comments`);
+        if (comments.length === 0) {
+          return;
+        }
+
+        commentsByTask.set(
+          taskId,
+          comments.map((comment) => ({
+            ...comment,
+            taskId: comment.taskId || taskId,
+          })),
+        );
+      }),
+    );
+
+    return commentsByTask;
   }
 }
 
