@@ -1,0 +1,247 @@
+# KPI Dashboard Handoff
+
+Date: 2026-04-18
+Repo: `mxdgroup/mxdcompass_staff_kpi_dashboard`
+Working branch: `main`
+Latest pushed commit: `fbff21f`
+Commit message: `Stabilize dashboard sync and metrics pipeline`
+
+## Purpose
+
+This document is a full handoff for a new chat/session. It captures:
+
+- the original review findings,
+- what has already been fixed,
+- what was deployed,
+- what was verified on live production,
+- what is still unresolved,
+- and the best next steps.
+
+## Original High-Level Review Findings
+
+These were the key issues identified during review:
+
+1. Public write endpoints were unauthenticated.
+2. `syncTask()` could lose concurrent updates.
+3. Debug status refresh could poison the shared status cache.
+4. Cron sync could report success even when snapshot persistence failed.
+5. GitHub PR metrics were org-wide instead of repo-scoped.
+6. Week navigation broke on ISO week-53 years.
+7. Team-card flow efficiency was rendered 100x too high.
+8. The `lint` script was broken on Next 16.
+9. Weekly completed-task counts were based on update activity instead of completion timing.
+10. Flow throughput counted touched completed tickets, not actual completions for the selected week.
+11. Weekly Wrike aggregation could double-count tasks that existed in multiple folders.
+12. File-fallback sync mode was effectively broken without Redis.
+13. The overview UI could show stale data after fetch failures.
+
+Additional follow-up review findings were later identified and fixed:
+
+1. GitHub PR searches were being run in parallel in a way that could trip GitHub Search rate limits.
+2. The new flow snapshot write guard wait window was too short.
+3. `AttentionItems` froze its notion of current time at mount, causing stale stuck-task calculations.
+
+## What Has Already Been Implemented
+
+The following remediation work has already been completed in the codebase and was pushed to GitHub in commit `fbff21f`:
+
+### Sync / storage / concurrency
+
+- Added shared flow-snapshot write coordination for full sync and single-task patch flows.
+- Hardened the flow snapshot write path to avoid patch-vs-patch and patch-vs-full-sync lost updates.
+- Increased the flow write guard wait window so overlapping sync activity is less likely to fail spuriously.
+- Added runtime override loading with Redis-first behavior and disk fallback.
+- Restored intended local/dev behavior when Redis is unavailable.
+
+### Cache / debug / cron behavior
+
+- Fixed workflow-status cache invalidation behavior so the debug refresh path no longer poisons the shared cache.
+- Hardened status resolution so invalid or empty cached payloads are treated as misses.
+- Updated cron sync behavior so failed snapshot saves are treated as real failures rather than silent success.
+
+### Metrics correctness
+
+- Changed weekly completion semantics to use `completedDate` within the selected week.
+- Changed flow throughput and related cycle-time sampling to use week-bounded completions instead of touched completed tickets.
+- Scoped GitHub PR metrics to configured repositories instead of the entire org.
+- Deduplicated weekly Wrike tasks across multiple folders.
+- Preserved/derived client attribution for newly patched flow tickets more reliably.
+- Fixed team-card flow efficiency display so it no longer multiplies by 100 twice.
+- Fixed ISO week navigation so week 53 years are handled correctly.
+
+### UI / stale state
+
+- Fixed stale fetch-state handling in the overview flow.
+- Fixed `AttentionItems` so time-sensitive stuck calculations refresh while the page remains open.
+
+### Tooling / dependencies
+
+- Replaced the broken `next lint` flow with a real ESLint setup.
+- Added `eslint.config.mjs`.
+- Updated dependencies within the current major lines.
+- Upgraded Next to a patched version.
+- `npm audit --omit=dev` was brought to `0 vulnerabilities` during validation.
+
+## Important Scope Decision
+
+The endpoint-auth finding was explicitly deprioritized during this pass because the tool is currently treated as internal-only.
+
+That means:
+
+- the auth/security finding is still conceptually valid,
+- but it was intentionally not the focus of the remediation work performed here.
+
+If a future pass needs to harden the app for broader exposure, that should be revisited first.
+
+## Validation Already Performed Locally
+
+These checks were run successfully during the remediation pass:
+
+- `npm run lint`
+- `npx tsc --noEmit`
+- `npm audit --omit=dev`
+
+Local production build in the sandbox was previously blocked by Google Fonts fetching from `src/app/layout.tsx`, but cloud build on Vercel succeeded.
+
+## Deployment History
+
+### Important note
+
+An initial direct Vercel CLI deploy was done by mistake when the user asked for an immediate live deploy. That direct deploy was later undone so the release path would match the normal GitHub -> Vercel flow.
+
+### What was done to correct the deploy path
+
+1. The direct Vercel CLI production deployment was rolled back.
+2. The local changes were committed on `main`.
+3. `main` was pushed to GitHub.
+4. Vercel built a GitHub-triggered production deployment from that push.
+5. Production was promoted onto the GitHub-built deployment.
+
+### Git / deploy state now
+
+- GitHub contains the latest changes on `main`.
+- The live site is serving a GitHub-built deployment.
+- Production is no longer depending on the temporary local CLI deploy.
+
+## Current Production Deployment State
+
+Production alias at time of handoff:
+
+- `https://mxdcompass-staff-kpi-dashboard.vercel.app`
+
+GitHub-built production deployment promoted live during this session:
+
+- `https://mxdcompass-staff-kpi-dashboard-qqum9zv06-mxdgroup.vercel.app`
+
+Commit deployed through GitHub:
+
+- `fbff21f`
+
+## Live E2E Results Already Performed
+
+The following checks were run successfully against live production after the GitHub-backed deployment:
+
+### Reachability
+
+- `/internal/kpis` returned `200 OK` after the expected redirect behavior.
+- `/internal/kpis/flow` returned `200 OK`.
+
+### Read APIs
+
+- `/internal/kpis/api/dashboard` returned populated live data.
+- `/internal/kpis/api/flow` returned populated live ticket data.
+- The live dashboard payload showed:
+  - `current.week = 2026-W16`
+  - `current.syncedAt = 2026-04-18T12:48:36.322Z`
+  - populated employees/tasks
+- The live flow payload showed populated ticket data and usable task IDs, including:
+  - `MAAAAAEHJcZM`
+
+### Mutation paths
+
+- `/internal/kpis/api/sync/task` succeeded on live for task `MAAAAAEHJcZM`
+- Response:
+  - `{"ok":true,"taskId":"MAAAAAEHJcZM","duration":"1s"}`
+
+## Important Live Operational Issue Still Present
+
+The full sync path could not be fully validated because live production reports an in-progress sync lock:
+
+- `/internal/kpis/api/sync/trigger` returned:
+  - `{"error":"Sync already in progress"}`
+- This occurred on multiple attempts.
+
+Current health response also shows production is in a degraded webhook/sync state:
+
+- `healthy: false`
+- `lastSyncedAt: 2026-04-17T08:53:51.838Z`
+- `latestWeek: 2026-W16`
+- `lastWebhookEvent: 2026-04-09T15:41:04.000Z`
+- `webhookHealthy: false`
+- `registeredWebhookId: IEAGV532JAACB5HC`
+
+Interpretation:
+
+- The app is live and serving the new GitHub-built code.
+- Read paths are working.
+- Single-task mutation works.
+- But a full sync appears blocked by a live lock or long-running in-progress state.
+- The stale webhook health predates the last deploy and appears to be an operational/runtime issue rather than a build failure.
+
+## Recommended Next Investigation
+
+The next chat should focus on why production is stuck in `Sync already in progress`.
+
+That should likely include:
+
+1. Inspect the sync lock implementation and storage backend on live.
+2. Confirm whether a stale Redis lock key exists and whether TTL/cleanup is functioning correctly.
+3. Review the full sync route, cron sync route, and lock release behavior in:
+   - `src/lib/syncRunner.ts`
+   - `src/lib/storage.ts`
+   - `src/lib/flowStorage.ts`
+   - `src/app/api/sync/trigger/route.ts`
+   - `src/app/api/cron/sync/route.ts`
+4. Determine whether the lock is genuinely active because a long-running sync is still executing, or whether the lock is stale.
+5. Once the lock issue is understood, rerun a live full-sync smoke test and compare:
+   - health timestamp changes,
+   - dashboard `syncedAt`,
+   - flow `syncedAt`,
+   - and any alerting/log output.
+
+## Suggested Prompt For The Next Chat
+
+Use something close to this:
+
+> We already completed a major remediation pass on `mxdgroup/mxdcompass_staff_kpi_dashboard` and deployed commit `fbff21f` to production through GitHub/Vercel. Please read `CHAT_HANDOFF_2026-04-18.md` first. The live site is up and read APIs work, and single-task resync works, but `/internal/kpis/api/sync/trigger` keeps returning `{"error":"Sync already in progress"}` and `/internal/kpis/api/sync/health` still shows `healthy: false` with stale webhook state. Please debug why production appears stuck in an in-progress sync state and complete the live full-sync E2E validation.
+
+## Files Most Likely Relevant For Next Work
+
+- `src/lib/syncRunner.ts`
+- `src/lib/storage.ts`
+- `src/lib/flowStorage.ts`
+- `src/app/api/sync/trigger/route.ts`
+- `src/app/api/sync/task/route.ts`
+- `src/app/api/cron/sync/route.ts`
+- `src/app/api/debug/statuses/route.ts`
+- `src/lib/github/fetcher.ts`
+- `src/lib/wrike/fetcher.ts`
+- `src/app/page.tsx`
+- `src/app/flow/page.tsx`
+
+## Quick Status Summary
+
+What is done:
+
+- major remediation pass implemented,
+- lint/typecheck/audit validated,
+- changes committed and pushed to GitHub,
+- production redeployed properly through GitHub,
+- production read paths verified,
+- production single-task sync verified.
+
+What is not fully done:
+
+- full live sync E2E is still incomplete because production reports `Sync already in progress`,
+- webhook health remains stale/unhealthy on live,
+- endpoint auth hardening was intentionally not the focus of this pass.
