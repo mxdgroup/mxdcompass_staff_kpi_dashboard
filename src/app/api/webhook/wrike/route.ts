@@ -1,5 +1,7 @@
 import { after } from "next/server";
 import {
+  getForwardedRequestIp,
+  isTrustedWrikeWebhookIp,
   signHookSecret,
   validateSignature,
   storeTransition,
@@ -7,6 +9,8 @@ import {
 } from "@/lib/wrike/webhook";
 import { applyDateForStatusChange } from "@/lib/wrike/dateWriter";
 import { syncTask } from "@/lib/syncRunner";
+import { getSharedRedis } from "@/lib/storage";
+import { WEBHOOK_ID_KEY } from "@/lib/wrike/webhookRegistrar";
 
 // after() runs within this function's lifetime — needs time for per-task sync patches
 export const maxDuration = 60;
@@ -52,28 +56,50 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // --- EVENTS ---
-  if (!signature) {
-    console.warn("[webhook] Missing signature header — rejecting unsigned request");
-    return new Response(JSON.stringify({ error: "Missing webhook signature" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const valid = await validateSignature(rawBody, signature);
-  if (!valid) {
-    console.warn("[webhook] Signature mismatch — rejecting request");
-    return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   let events: WrikeWebhookEvent[];
   try {
     events = JSON.parse(rawBody) as WrikeWebhookEvent[];
   } catch {
     return new Response("Bad Request", { status: 400 });
+  }
+
+  if (!signature) {
+    const requestIp = getForwardedRequestIp(request);
+    const trustedIp = isTrustedWrikeWebhookIp(requestIp);
+    const redis = getSharedRedis();
+    const registeredWebhookId = redis
+      ? await redis.get<string>(WEBHOOK_ID_KEY)
+      : null;
+    const bodyWebhookIds = [...new Set(events.map((event) => event.webhookId))];
+    const matchingWebhook =
+      !!registeredWebhookId &&
+      bodyWebhookIds.length === 1 &&
+      bodyWebhookIds[0] === registeredWebhookId;
+
+    if (!trustedIp || !matchingWebhook) {
+      console.warn(
+        `[webhook] Missing signature header — rejecting unsigned request (ip=${requestIp ?? "unknown"} webhookIds=${bodyWebhookIds.join(",") || "none"})`,
+      );
+      return new Response(JSON.stringify({ error: "Missing webhook signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    console.warn(
+      `[webhook] Missing signature header from trusted Wrike IP ${requestIp}; accepting fallback auth for webhook ${registeredWebhookId}`,
+    );
+  }
+
+  if (signature) {
+    const valid = await validateSignature(rawBody, signature);
+    if (!valid) {
+      console.warn("[webhook] Signature mismatch — rejecting request");
+      return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   const statusChangedEvents = events.filter(

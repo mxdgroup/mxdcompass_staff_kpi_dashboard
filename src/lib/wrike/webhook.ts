@@ -24,6 +24,14 @@ export interface TransitionEntry {
 // ---------- Constants ----------
 
 const TTL_SECONDS = 365 * 24 * 60 * 60;
+const WRIKE_WEBHOOK_IP_CIDRS = [
+  "160.19.162.0/23",
+  "34.73.3.211/32",
+  "35.196.104.95/32",
+  "34.72.158.28/32",
+  "185.157.64.0/22",
+  "146.148.2.222/32",
+];
 
 function getConfiguredWebhookSecret(): string | null {
   const secret = process.env.WRIKE_WEBHOOK_SECRET;
@@ -65,6 +73,50 @@ export function signHookSecret(hookSecret: string): string {
     .createHmac("sha256", secret)
     .update(hookSecret, "utf8")
     .digest("hex");
+}
+
+export function getForwardedRequestIp(request: Request): string | null {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (!forwardedFor) return null;
+  const first = forwardedFor.split(",")[0]?.trim();
+  return first || null;
+}
+
+export function isTrustedWrikeWebhookIp(ip: string | null): boolean {
+  if (!ip) return false;
+  const normalized = normalizeIpv4(ip);
+  if (!normalized) return false;
+  return WRIKE_WEBHOOK_IP_CIDRS.some((cidr) => ipInCidr(normalized, cidr));
+}
+
+function normalizeIpv4(ip: string): string | null {
+  const parts = ip.trim().split(".");
+  if (parts.length !== 4) return null;
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return null;
+  }
+  return nums.join(".");
+}
+
+function ipToInt(ip: string): number {
+  return ip
+    .split(".")
+    .map(Number)
+    .reduce((acc, octet) => (acc << 8) + octet, 0) >>> 0;
+}
+
+function ipInCidr(ip: string, cidr: string): boolean {
+  const [rangeIp, prefixStr] = cidr.split("/");
+  const prefix = Number(prefixStr);
+  if (!rangeIp || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    return false;
+  }
+
+  const ipInt = ipToInt(ip);
+  const rangeInt = ipToInt(rangeIp);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipInt & mask) === (rangeInt & mask);
 }
 
 // ---------- ISO-week helper ----------
