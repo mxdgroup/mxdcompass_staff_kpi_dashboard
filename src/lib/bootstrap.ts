@@ -17,6 +17,12 @@ export interface ConfigOverrides {
   discoveredAt: string;
 }
 
+export interface RuntimeOverrideLoadResult {
+  loaded: boolean;
+  source?: "redis" | "disk";
+  error?: string;
+}
+
 export async function discoverWrikeConfig(): Promise<ConfigOverrides> {
   const client = getWrikeClient();
 
@@ -138,6 +144,22 @@ export function loadOverridesFromDisk(): void {
   }
 }
 
+function loadOverridesFromDiskResult(): RuntimeOverrideLoadResult {
+  try {
+    if (!fs.existsSync(OVERRIDES_FILE)) {
+      return { loaded: false, error: "No overrides found on disk" };
+    }
+    const raw = fs.readFileSync(OVERRIDES_FILE, "utf-8");
+    const overrides: ConfigOverrides = JSON.parse(raw);
+    applyOverrides(overrides);
+    return { loaded: true, source: "disk" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[bootstrap] Failed to load overrides from disk:", message);
+    return { loaded: false, error: message };
+  }
+}
+
 /**
  * Load overrides from Redis (async, for serverless on Vercel).
  * Call at the start of API routes to rehydrate contact IDs after cold start.
@@ -168,6 +190,37 @@ export async function loadOverridesFromRedis(): Promise<{ loaded: boolean; error
     console.error("[bootstrap] Failed to load overrides from Redis:", message);
     return { loaded: false, error: message };
   }
+}
+
+/**
+ * Load overrides for the current runtime.
+ * Prefers Redis when available, but falls back to the local overrides file for
+ * local/dev environments and Redis outages.
+ */
+export async function loadRuntimeOverrides(): Promise<RuntimeOverrideLoadResult> {
+  const redisResult = await loadOverridesFromRedis();
+  if (redisResult.loaded) {
+    return { loaded: true, source: "redis" };
+  }
+
+  const diskResult = loadOverridesFromDiskResult();
+  if (diskResult.loaded) {
+    if (redisResult.error) {
+      console.warn(
+        `[bootstrap] Falling back to disk overrides after Redis load failure: ${redisResult.error}`,
+      );
+    }
+    return diskResult;
+  }
+
+  const errors = [redisResult.error, diskResult.error].filter(Boolean);
+  return {
+    loaded: false,
+    error:
+      errors.length > 0
+        ? errors.join("; ")
+        : "No config overrides available from Redis or disk",
+  };
 }
 
 /**

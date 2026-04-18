@@ -127,30 +127,36 @@ export async function fetchWeeklyGitHubData(
   );
 
   // --- (b) PRs merged ---
-  const searchQuery = `type:pr+author:${username}+org:${org}+merged:${weekStart}..${weekEnd}`;
   let prs: GitHubPR[] = [];
 
-  try {
-    const searchResult = await searchIssues(searchQuery);
+  if (repos.length > 0) {
+    try {
+      const prMap = new Map<string, GitHubPR>();
+      for (const repo of repos) {
+        const searchResult = await searchIssues(
+          `type:pr+author:${username}+repo:${org}/${repo}+merged:${weekStart}..${weekEnd}`,
+        ).catch(() => ({ items: [] as Record<string, unknown>[] }));
 
-    prs = (searchResult.items as unknown as SearchItem[])
-      .filter((si) => si.pull_request?.merged_at != null)
-      .map((si) => {
-        const createdAt = new Date(si.created_at).getTime();
-        const mergedAt = new Date(si.pull_request!.merged_at!).getTime();
-        const cycleTimeHours = (mergedAt - createdAt) / (1000 * 60 * 60);
-        return {
-          number: si.number,
-          title: si.title,
-          repo: repoNameFromUrl(si.repository_url),
-          createdAt: si.created_at,
-          mergedAt: si.pull_request!.merged_at!,
-          cycleTimeHours: Math.round(cycleTimeHours * 100) / 100,
-        };
-      });
-  } catch {
-    // Search failed — return empty PR data rather than crashing.
-    prs = [];
+        for (const si of searchResult.items as unknown as SearchItem[]) {
+          if (!si.pull_request?.merged_at) continue;
+          const createdAt = new Date(si.created_at).getTime();
+          const mergedAt = new Date(si.pull_request.merged_at).getTime();
+          const pr: GitHubPR = {
+            number: si.number,
+            title: si.title,
+            repo: repoNameFromUrl(si.repository_url),
+            createdAt: si.created_at,
+            mergedAt: si.pull_request.merged_at,
+            cycleTimeHours: Math.round(((mergedAt - createdAt) / (1000 * 60 * 60)) * 100) / 100,
+          };
+          prMap.set(`${pr.repo}#${pr.number}`, pr);
+        }
+      }
+      prs = Array.from(prMap.values());
+    } catch {
+      // Search failed — return empty PR data rather than crashing.
+      prs = [];
+    }
   }
 
   // --- (c) Compute median cycle time ---

@@ -1,10 +1,10 @@
-import { loadOverridesFromRedis, getUnmappedMembers } from "@/lib/bootstrap";
+import { loadRuntimeOverrides, getUnmappedMembers } from "@/lib/bootstrap";
 import { config } from "@/lib/config";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
-import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { saveFlowSnapshotWithGuard } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 
 export const maxDuration = 300;
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   }
 
   // P22: Fail if overrides can't load — blank contact IDs produce empty snapshots
-  const overrideResult = await loadOverridesFromRedis();
+  const overrideResult = await loadRuntimeOverrides();
   if (!overrideResult.loaded) {
     return NextResponse.json(
       { error: `Config override load failed: ${overrideResult.error}` },
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
     // Build flow dashboard snapshot
     const flowSnapshot = await buildFlowSnapshot(week);
-    const flowResult = await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 

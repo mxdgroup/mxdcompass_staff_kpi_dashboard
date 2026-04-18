@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { EmployeeWeekData } from "@/lib/types";
 
 interface AttentionItemsProps {
@@ -19,7 +20,17 @@ const TYPE_STYLES: Record<AttentionItem["type"], { bg: string; dot: string; labe
 };
 
 export function AttentionItems({ employees }: AttentionItemsProps) {
+  const [now, setNow] = useState(() => Date.now());
   const items: AttentionItem[] = [];
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 60_000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
 
   for (const emp of employees) {
     const returned = emp.tasks.filter((t) => t.returnedForReview);
@@ -31,7 +42,6 @@ export function AttentionItems({ employees }: AttentionItemsProps) {
       });
     }
 
-    const now = Date.now();
     const fiveDays = 5 * 24 * 60 * 60 * 1000;
     const stuck = emp.tasks.filter((t) => {
       if (t.completedDate) return false;

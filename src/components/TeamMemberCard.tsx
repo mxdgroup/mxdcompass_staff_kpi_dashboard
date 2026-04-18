@@ -115,7 +115,7 @@ export default function TeamMemberCard({
           )}
           {summary?.flowEfficiency != null && (
             <span title="Flow efficiency" className="text-xs">
-              <span className="tabular-nums">{fmt(summary.flowEfficiency * 100, "%")}</span> eff
+              <span className="tabular-nums">{fmt(summary.flowEfficiency, "%")}</span> eff
             </span>
           )}
           {role === "developer" && github != null && (

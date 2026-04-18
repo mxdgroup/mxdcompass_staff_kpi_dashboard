@@ -109,6 +109,39 @@ export function isRedisAvailable(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Generic guard helpers
+// ---------------------------------------------------------------------------
+
+async function acquireGuard(
+  key: string,
+  ttlSeconds: number,
+): Promise<SyncGuardResult> {
+  if (!hasRedis) {
+    if (process.env.VERCEL) {
+      console.error(`[storage] Redis unavailable in production — guard failed closed (${key})`);
+      return { acquired: false, owner: "" };
+    }
+    return { acquired: true, owner: "local" };
+  }
+
+  const owner = crypto.randomUUID();
+  const r = getRedis()!;
+  const result = await r.set(key, owner, { ex: ttlSeconds, nx: true });
+  return { acquired: result === "OK", owner };
+}
+
+async function releaseGuard(key: string, owner: string): Promise<void> {
+  if (!hasRedis || owner === "local") return;
+  const r = getRedis()!;
+  const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
+  try {
+    await r.eval(script, [key], [owner]);
+  } catch (err) {
+    console.warn(`[storage] Lua eval failed for ${key}; letting lock expire via TTL:`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot Storage
 // ---------------------------------------------------------------------------
 
@@ -195,36 +228,11 @@ export interface SyncGuardResult {
 }
 
 export async function acquireSyncGuard(): Promise<SyncGuardResult> {
-  // P3: In production, fail closed when Redis unavailable
-  if (!hasRedis) {
-    if (process.env.VERCEL) {
-      console.error("[storage] Redis unavailable in production — sync guard failed closed");
-      return { acquired: false, owner: "" };
-    }
-    return { acquired: true, owner: "local" }; // Local dev: no guard needed
-  }
-
-  // P1: Owner token prevents cross-run lock deletion
-  const owner = crypto.randomUUID();
-  const r = getRedis()!;
-  const result = await r.set(SYNC_GUARD_KEY, owner, { ex: SYNC_GUARD_TTL, nx: true });
-  return { acquired: result === "OK", owner };
+  return acquireGuard(SYNC_GUARD_KEY, SYNC_GUARD_TTL);
 }
 
 export async function releaseSyncGuard(owner: string): Promise<void> {
-  if (!hasRedis || owner === "local") return;
-  const r = getRedis()!;
-
-  // P1: Atomic check-and-delete via Lua script — only delete if we own the lock
-  const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
-  try {
-    await r.eval(script, [SYNC_GUARD_KEY], [owner]);
-  } catch (err) {
-    // If Lua eval fails (e.g., Upstash plan limitation), do NOT fall back to
-    // non-atomic GET-then-DEL — that reintroduces the cross-run race P1 prevents.
-    // Let the TTL (600s) expire naturally instead.
-    console.warn("[storage] Lua eval failed; letting lock expire via TTL:", err);
-  }
+  await releaseGuard(SYNC_GUARD_KEY, owner);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,30 +248,63 @@ export interface CatchupGuardResult {
 }
 
 export async function acquireCatchupGuard(): Promise<CatchupGuardResult> {
-  if (!hasRedis) {
-    if (process.env.VERCEL) {
-      console.error("[storage] Redis unavailable in production — catchup guard failed closed");
-      return { acquired: false, owner: "" };
-    }
-    return { acquired: true, owner: "local" };
-  }
-
-  const owner = crypto.randomUUID();
-  const r = getRedis()!;
-  const result = await r.set(CATCHUP_GUARD_KEY, owner, { ex: CATCHUP_GUARD_TTL, nx: true });
-  return { acquired: result === "OK", owner };
+  return acquireGuard(CATCHUP_GUARD_KEY, CATCHUP_GUARD_TTL);
 }
 
 export async function releaseCatchupGuard(owner: string): Promise<void> {
-  if (!hasRedis || owner === "local") return;
-  const r = getRedis()!;
+  await releaseGuard(CATCHUP_GUARD_KEY, owner);
+}
 
-  const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
-  try {
-    await r.eval(script, [CATCHUP_GUARD_KEY], [owner]);
-  } catch (err) {
-    console.warn("[storage] Lua eval failed; letting catchup lock expire via TTL:", err);
+// ---------------------------------------------------------------------------
+// Flow Snapshot Guard — prevents overlapping writes to the same week snapshot
+// ---------------------------------------------------------------------------
+
+const FLOW_SNAPSHOT_GUARD_TTL = 600;
+
+function flowSnapshotGuardKey(week: string): string {
+  return `kpi:flow:write:${week}`;
+}
+
+export async function acquireFlowSnapshotGuard(
+  week: string,
+): Promise<SyncGuardResult> {
+  return acquireGuard(flowSnapshotGuardKey(week), FLOW_SNAPSHOT_GUARD_TTL);
+}
+
+interface GuardRetryOptions {
+  attempts?: number;
+  delayMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function acquireFlowSnapshotGuardWithRetry(
+  week: string,
+  options: GuardRetryOptions = {},
+): Promise<SyncGuardResult> {
+  const attempts = Math.max(options.attempts ?? 1, 1);
+  const delayMs = Math.max(options.delayMs ?? 250, 0);
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const result = await acquireFlowSnapshotGuard(week);
+    if (result.acquired) return result;
+    if (attempt < attempts) {
+      await sleep(delayMs);
+    }
   }
+
+  return { acquired: false, owner: "" };
+}
+
+export async function releaseFlowSnapshotGuard(
+  week: string,
+  owner: string,
+): Promise<void> {
+  await releaseGuard(flowSnapshotGuardKey(week), owner);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +333,10 @@ export async function setCachedWorkflowStatuses(
 ): Promise<void> {
   const ttl = 24 * 60 * 60;
   await kvSet(WORKFLOW_CACHE_KEY, JSON.stringify(statuses), ttl);
+}
+
+export async function clearCachedWorkflowStatuses(): Promise<void> {
+  await kvDel(WORKFLOW_CACHE_KEY);
 }
 
 // ---------------------------------------------------------------------------

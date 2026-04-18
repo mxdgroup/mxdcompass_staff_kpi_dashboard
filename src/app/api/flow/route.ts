@@ -1,4 +1,4 @@
-import { loadOverridesFromRedis } from "@/lib/bootstrap";
+import { loadRuntimeOverrides } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
 import { getFlowSnapshot, getFlowLatestWeek } from "@/lib/flowStorage";
 import type { FlowApiResponse } from "@/lib/types";
@@ -6,7 +6,7 @@ import type { FlowApiResponse } from "@/lib/types";
 const ISO_WEEK_REGEX = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
 
 export async function GET(request: Request) {
-  await loadOverridesFromRedis();
+  await loadRuntimeOverrides();
   const { searchParams } = new URL(request.url);
   const weekParam = searchParams.get("week");
 

@@ -1,12 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getSharedRedis, isRedisAvailable } from "./storage";
+import {
+  getSharedRedis,
+  acquireFlowSnapshotGuardWithRetry,
+  releaseFlowSnapshotGuard,
+} from "./storage";
 import type { FlowSnapshot } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const FLOW_PREFIX = "kpi:flow:";
 const FLOW_LATEST_KEY = "kpi:flow:latest";
 const TTL_SECONDS = 365 * 24 * 60 * 60;
+const FLOW_SNAPSHOT_GUARD_RETRY_ATTEMPTS = 60;
+const FLOW_SNAPSHOT_GUARD_RETRY_DELAY_MS = 500;
 
 // ---------------------------------------------------------------------------
 // Local file helpers (same pattern as storage.ts)
@@ -62,6 +68,27 @@ export async function saveFlowSnapshot(
     const reason = `Local file write failed: ${err instanceof Error ? err.message : String(err)}`;
     console.warn(`[flowStorage] ${reason}`);
     return { saved: false, reason };
+  }
+}
+
+export async function saveFlowSnapshotWithGuard(
+  snapshot: FlowSnapshot,
+): Promise<{ saved: boolean; reason?: string }> {
+  const guard = await acquireFlowSnapshotGuardWithRetry(snapshot.week, {
+    attempts: FLOW_SNAPSHOT_GUARD_RETRY_ATTEMPTS,
+    delayMs: FLOW_SNAPSHOT_GUARD_RETRY_DELAY_MS,
+  });
+  if (!guard.acquired) {
+    return {
+      saved: false,
+      reason: `Timed out waiting for flow snapshot write guard (${snapshot.week})`,
+    };
+  }
+
+  try {
+    return await saveFlowSnapshot(snapshot);
+  } finally {
+    await releaseFlowSnapshotGuard(snapshot.week, guard.owner);
   }
 }
 

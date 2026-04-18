@@ -3,12 +3,23 @@
 // - /api/sync (cron/external with Bearer auth)
 // - Webhook after() for auto-sync on task status changes
 
-import { loadOverridesFromRedis, getUnmappedMembers } from "./bootstrap";
+import { loadRuntimeOverrides, getUnmappedMembers } from "./bootstrap";
 import { config } from "./config";
-import { acquireSyncGuard, releaseSyncGuard, saveSnapshot } from "./storage";
+import {
+  acquireSyncGuard,
+  acquireFlowSnapshotGuardWithRetry,
+  releaseFlowSnapshotGuard,
+  releaseSyncGuard,
+  saveSnapshot,
+} from "./storage";
 import { buildWeeklySnapshot } from "./aggregator";
 import { buildFlowSnapshot, patchFlowSnapshotForTask } from "./flowBuilder";
-import { saveFlowSnapshot, getFlowSnapshot, getFlowLatestWeek } from "./flowStorage";
+import {
+  saveFlowSnapshot,
+  saveFlowSnapshotWithGuard,
+  getFlowSnapshot,
+  getFlowLatestWeek,
+} from "./flowStorage";
 import { getCurrentWeek } from "./week";
 import { getWrikeClient } from "./wrike/client";
 import { initFolderCommentCache, clearFolderCommentCache } from "./wrike/fetcher";
@@ -33,7 +44,7 @@ export interface SyncResult {
  */
 export async function runSync(): Promise<SyncResult> {
   // Load config overrides (contact IDs etc.)
-  const overrideResult = await loadOverridesFromRedis();
+  const overrideResult = await loadRuntimeOverrides();
   if (!overrideResult.loaded) {
     return {
       ok: false,
@@ -113,7 +124,7 @@ export async function runSync(): Promise<SyncResult> {
     const weeklyResult = await saveSnapshot(snapshot);
 
     const flowSnapshot = await buildFlowSnapshot(week);
-    const flowResult = await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
@@ -143,21 +154,35 @@ export async function runSync(): Promise<SyncResult> {
  * Does NOT use the sync guard — it's lightweight and non-destructive.
  */
 export async function syncTask(taskId: string): Promise<{ ok: boolean; error?: string }> {
-  const overrideResult = await loadOverridesFromRedis();
+  const overrideResult = await loadRuntimeOverrides();
   if (!overrideResult.loaded) {
     return { ok: false, error: `Config load failed: ${overrideResult.error}` };
   }
 
   const week = await getFlowLatestWeek() ?? getCurrentWeek();
-  const existing = await getFlowSnapshot(week);
-  if (!existing) {
-    // No snapshot to patch — need a full sync first
-    console.warn(`[syncTask] No existing flow snapshot for ${week}, falling back to full sync`);
-    const result = await runSync();
-    return { ok: result.ok, error: result.error };
+  const guard = await acquireFlowSnapshotGuardWithRetry(week, {
+    attempts: 60,
+    delayMs: 500,
+  });
+  if (!guard.acquired) {
+    return {
+      ok: false,
+      error: `Timed out waiting for flow snapshot write guard (${week})`,
+    };
   }
 
+  let guardHeld = true;
   try {
+    const existing = await getFlowSnapshot(week);
+    if (!existing) {
+      // No snapshot to patch — need a full sync first
+      console.warn(`[syncTask] No existing flow snapshot for ${week}, falling back to full sync`);
+      await releaseFlowSnapshotGuard(week, guard.owner);
+      guardHeld = false;
+      const result = await runSync();
+      return { ok: result.ok, error: result.error };
+    }
+
     const patched = await patchFlowSnapshotForTask(taskId, existing);
     const result = await saveFlowSnapshot(patched);
     if (!result.saved) {
@@ -169,5 +194,9 @@ export async function syncTask(taskId: string): Promise<{ ok: boolean; error?: s
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[syncTask] Failed for task ${taskId}:`, message);
     return { ok: false, error: message };
+  } finally {
+    if (guardHeld) {
+      await releaseFlowSnapshotGuard(week, guard.owner);
+    }
   }
 }

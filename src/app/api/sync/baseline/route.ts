@@ -1,10 +1,10 @@
-import { loadOverridesFromRedis, getUnmappedMembers } from "@/lib/bootstrap";
+import { loadRuntimeOverrides, getUnmappedMembers } from "@/lib/bootstrap";
 import { config } from "@/lib/config";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getSharedRedis } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
-import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { saveFlowSnapshotWithGuard } from "@/lib/flowStorage";
 import { getCurrentWeek, getWeekRange } from "@/lib/week";
 import { resolveWorkflowStatuses, fetchClientTasks } from "@/lib/wrike/fetcher";
 import { redisKeyForWeek, type TransitionEntry } from "@/lib/wrike/webhook";
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const overrideResult = await loadOverridesFromRedis();
+  const overrideResult = await loadRuntimeOverrides();
   if (!overrideResult.loaded) {
     return NextResponse.json(
       { error: `Config override load failed: ${overrideResult.error}` },
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
     const weeklyResult = await saveSnapshot(snapshot);
 
     const flowSnapshot = await buildFlowSnapshot(week);
-    const flowResult = await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 

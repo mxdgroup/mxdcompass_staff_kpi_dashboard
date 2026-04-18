@@ -1,4 +1,4 @@
-import { loadOverridesFromRedis } from "@/lib/bootstrap";
+import { loadRuntimeOverrides } from "@/lib/bootstrap";
 import { NextResponse } from "next/server";
 import { getTransitionsInRange } from "@/lib/wrike/transitions";
 import { resolveWorkflowStatuses } from "@/lib/wrike/fetcher";
@@ -35,7 +35,7 @@ export interface YesterdayApiResponse {
 }
 
 export async function GET() {
-  await loadOverridesFromRedis();
+  await loadRuntimeOverrides();
 
   // Compute yesterday midnight-to-midnight UTC
   const now = new Date();
@@ -53,7 +53,7 @@ export async function GET() {
   const transitions = await getTransitionsInRange(startTs, endTs);
 
   // Resolve status names (graceful fallback)
-  let statusMap = new Map<string, string>();
+  const statusMap = new Map<string, string>();
   try {
     const statuses = await resolveWorkflowStatuses();
     for (const s of statuses.allStatuses) {

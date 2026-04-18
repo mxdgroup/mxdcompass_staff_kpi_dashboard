@@ -28,9 +28,6 @@ export async function GET(request: Request) {
   const client = getWrikeClient();
   const statuses = await resolveWorkflowStatuses();
   const configuredFolderIds = new Set(config.clients.map((c) => c.wrikeFolderId));
-  const configuredFolderNames = Object.fromEntries(
-    config.clients.map((c) => [c.wrikeFolderId, c.name]),
-  );
 
   // Strategy: search each configured folder for the task by scanning all tasks.
   // Also try the Wrike /tasks endpoint with permalink filter.

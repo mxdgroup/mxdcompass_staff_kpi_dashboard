@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint . --max-warnings=0"
   },
   "type": "module",
   "dependencies": {
@@ -15,12 +15,17 @@
     "@types/react": "^19.2.14",
     "@upstash/redis": "^1.37.0",
     "autoprefixer": "^10.4.27",
-    "next": "^16.2.0",
+    "next": "^16.2.4",
     "postcss": "^8.5.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "recharts": "^2.15.0",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.2.4"
   }
 }

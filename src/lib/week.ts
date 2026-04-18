@@ -11,6 +11,17 @@ export interface WeekRange {
   endTimestamp: number;
 }
 
+function formatDateUtc(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function parseDateInput(dateInput: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    return new Date(`${dateInput}T00:00:00Z`);
+  }
+  return new Date(dateInput);
+}
+
 /** Get ISO week string for a date (e.g. "2026-W14") */
 export function getISOWeek(date: Date): string {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -37,13 +48,10 @@ export function getWeekRange(weekStr: string): WeekRange {
   sunday.setUTCDate(monday.getUTCDate() + 6);
   sunday.setUTCHours(23, 59, 59, 999);
 
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-
   return {
     week: weekStr,
-    start: fmt(monday),
-    end: fmt(sunday),
+    start: formatDateUtc(monday),
+    end: formatDateUtc(sunday),
     startTimestamp: monday.getTime(),
     endTimestamp: sunday.getTime(),
   };
@@ -82,12 +90,38 @@ export function getWeekDays(weekStr: string): string[] {
   const range = getWeekRange(weekStr);
   const monday = new Date(range.startTimestamp);
   const days: string[] = [];
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
   for (let i = 0; i < 7; i++) {
     const day = new Date(monday);
     day.setUTCDate(monday.getUTCDate() + i);
-    days.push(fmt(day));
+    days.push(formatDateUtc(day));
   }
   return days;
+}
+
+export function isDateWithinRange(
+  dateInput: string | null | undefined,
+  start: string,
+  end: string,
+): boolean {
+  if (!dateInput) return false;
+  const timestamp = parseDateInput(dateInput).getTime();
+  const startTimestamp = parseDateInput(start).getTime();
+  const endDate = parseDateInput(end);
+  endDate.setUTCHours(23, 59, 59, 999);
+  return timestamp >= startTimestamp && timestamp <= endDate.getTime();
+}
+
+export function isDateWithinWeek(
+  dateInput: string | null | undefined,
+  weekStr: string,
+): boolean {
+  const range = getWeekRange(weekStr);
+  return isDateWithinRange(dateInput, range.start, range.end);
+}
+
+export function getAdjacentISOWeek(weekStr: string, delta: number): string {
+  const range = getWeekRange(weekStr);
+  const monday = new Date(range.startTimestamp);
+  monday.setUTCDate(monday.getUTCDate() + delta * 7);
+  return getISOWeek(monday);
 }

@@ -1,26 +1,15 @@
 "use client";
 
+import { getAdjacentISOWeek } from "@/lib/week";
+
 interface WeekSelectorProps {
   currentWeek: string;
   onWeekChange: (week: string) => void;
 }
 
 export function WeekSelector({ currentWeek, onWeekChange }: WeekSelectorProps) {
-  const [yearStr, weekPart] = currentWeek.split("-W");
-  const year = parseInt(yearStr, 10);
-  const weekNum = parseInt(weekPart, 10);
-
   function navigate(delta: number) {
-    let newWeek = weekNum + delta;
-    let newYear = year;
-    if (newWeek < 1) {
-      newYear--;
-      newWeek = 52;
-    } else if (newWeek > 52) {
-      newYear++;
-      newWeek = 1;
-    }
-    onWeekChange(`${newYear}-W${String(newWeek).padStart(2, "0")}`);
+    onWeekChange(getAdjacentISOWeek(currentWeek, delta));
   }
 
   return (

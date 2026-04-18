@@ -1,10 +1,10 @@
-import { loadOverridesFromRedis, getUnmappedMembers } from "@/lib/bootstrap";
+import { loadRuntimeOverrides, getUnmappedMembers } from "@/lib/bootstrap";
 import { config } from "@/lib/config";
 import { NextResponse } from "next/server";
 import { acquireSyncGuard, releaseSyncGuard, saveSnapshot, getWebhookLastEvent } from "@/lib/storage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
-import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { saveFlowSnapshotWithGuard } from "@/lib/flowStorage";
 import { getCurrentWeek } from "@/lib/week";
 import { ensureWebhookRegistered } from "@/lib/wrike/webhookRegistrar";
 import {
@@ -58,7 +58,7 @@ async function runSync(): Promise<NextResponse> {
   };
 
   // P22: Fail if overrides can't load — blank contact IDs produce empty snapshots
-  const overrideResult = await loadOverridesFromRedis();
+  const overrideResult = await loadRuntimeOverrides();
   if (!overrideResult.loaded) {
     const message = `Config override load failed: ${overrideResult.error}`;
     console.error(`[cron/sync] ${message}`);
@@ -142,13 +142,13 @@ async function runSync(): Promise<NextResponse> {
     const week = getCurrentWeek();
     const snapshot = await buildWeeklySnapshot(week);
     markStep("buildWeeklySnapshot");
-    await saveSnapshot(snapshot);
+    const weeklyResult = await saveSnapshot(snapshot);
     markStep("saveSnapshot");
 
     // Build flow dashboard snapshot
     const flowSnapshot = await buildFlowSnapshot(week);
     markStep("buildFlowSnapshot");
-    await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
     markStep("saveFlowSnapshot");
 
     const duration = Math.round((Date.now() - startTime) / 1000);
@@ -156,11 +156,54 @@ async function runSync(): Promise<NextResponse> {
       `[cron/sync/timing] total=${Date.now() - startTime}ms ${JSON.stringify(timing)}`,
     );
 
+    const saveErrors: string[] = [];
+    if (!weeklyResult.saved) saveErrors.push(`Weekly: ${weeklyResult.reason}`);
+    if (!flowResult.saved) saveErrors.push(`Flow: ${flowResult.reason}`);
+
     const registrationFailed = webhookRegistration.action === "failed";
     const hasErrors =
-      snapshot.memberErrors.length > 0 || webhookStale || registrationFailed;
+      snapshot.memberErrors.length > 0 ||
+      webhookStale ||
+      registrationFailed ||
+      saveErrors.length > 0;
     if (hasErrors && process.env.NOTIFICATION_WEBHOOK_URL) {
-      await notifySlack(snapshot, webhookStale, webhookRegistration, duration).catch(() => {});
+      await notifySlack(
+        snapshot,
+        webhookStale,
+        webhookRegistration,
+        duration,
+        saveErrors,
+      ).catch(() => {});
+    }
+
+    if (saveErrors.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Snapshot persistence failed",
+          saveErrors,
+          week,
+          duration: `${duration}s`,
+          membersProcessed: snapshot.employees.length,
+          memberErrors: snapshot.memberErrors.length,
+          webhookStale,
+          webhookRegistration: {
+            action: webhookRegistration.action,
+            webhookId: webhookRegistration.webhookId,
+            hookUrl: webhookRegistration.hookUrl,
+            reason: webhookRegistration.reason,
+            cleanedUp: webhookRegistration.cleanedUp,
+          },
+          flowTickets: flowSnapshot.tickets.length,
+          summary: {
+            tasksCompleted: snapshot.teamSummary.tasksCompleted,
+            pipelineMovement: snapshot.teamSummary.pipelineMovement,
+            returnForReview: snapshot.teamSummary.returnForReviewCount,
+          },
+          timing,
+        },
+        { status: 500 },
+      );
     }
 
     return NextResponse.json({
@@ -178,6 +221,7 @@ async function runSync(): Promise<NextResponse> {
         cleanedUp: webhookRegistration.cleanedUp,
       },
       flowTickets: flowSnapshot.tickets.length,
+      saveErrors: saveErrors.length > 0 ? saveErrors : undefined,
       summary: {
         tasksCompleted: snapshot.teamSummary.tasksCompleted,
         pipelineMovement: snapshot.teamSummary.pipelineMovement,
@@ -215,6 +259,7 @@ async function notifySlack(
   webhookStale: boolean,
   registration: import("@/lib/wrike/webhookRegistrar").WebhookRegistrationResult,
   duration: number,
+  saveErrors: string[],
 ): Promise<void> {
   const url = process.env.NOTIFICATION_WEBHOOK_URL;
   if (!url) return;
@@ -244,6 +289,9 @@ async function notifySlack(
   }
   for (const err of snapshot.memberErrors) {
     issues.push(`${err.name}: ${err.error}`);
+  }
+  for (const saveError of saveErrors) {
+    issues.push(`Save failed: ${saveError}`);
   }
 
   await fetch(url, {

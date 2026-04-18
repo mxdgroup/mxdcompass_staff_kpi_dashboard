@@ -11,13 +11,13 @@ import type {
   ApprovalCycleTimeData,
   MemberError,
 } from "./types";
-import { getWeekRange, getWeekDays } from "./week";
+import { getWeekRange, getWeekDays, isDateWithinRange } from "./week";
 import { getSnapshot } from "./storage";
 import { fetchWeeklyMemberData, resolveWorkflowStatuses } from "./wrike/fetcher";
 import { getPipelineMovement, getReturnForReviewCount, getApprovalCycleTime, getTransitionsInRange } from "./wrike/transitions";
 import type { TransitionEntry } from "./wrike/webhook";
 import { fetchWeeklyGitHubData } from "./github/fetcher";
-import type { DailyCommits, GitHubWeekData } from "./github/types";
+import type { GitHubWeekData } from "./github/types";
 
 export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot> {
   const range = getWeekRange(week);
@@ -77,7 +77,9 @@ export async function buildWeeklySnapshot(week: string): Promise<WeeklySnapshot>
           };
         });
 
-        const tasksCompleted = tasks.filter((t) => t.completedDate !== null).length;
+        const tasksCompleted = tasks.filter((t) =>
+          isDateWithinRange(t.completedDate, range.start, range.end),
+        ).length;
         const tasksActive = tasks.filter((t) => t.status.toLowerCase() !== "new").length;
 
         let github: GitHubEmployeeData | null = null;

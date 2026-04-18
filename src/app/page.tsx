@@ -47,13 +47,17 @@ export default function DashboardPage() {
     fetchData(week);
   }
 
+  /* eslint-disable react-hooks/exhaustive-deps -- `fetchData` intentionally runs on the selected week only. */
   useEffect(() => {
     fetchData(week);
   }, [week]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   async function fetchData(w: string) {
     setLoading(true);
     setError("");
+    setWeeklyData(null);
+    setFlowData(null);
     const param = w === "current" ? "" : `?week=${w}`;
 
     const [weeklyRes, flowRes] = await Promise.allSettled([
@@ -61,24 +65,43 @@ export default function DashboardPage() {
       fetch(`/internal/kpis/api/flow${param}`),
     ]);
 
+    const errors: string[] = [];
+
     let weekly: DashboardApiResponse | null = null;
+    let weeklySucceeded = false;
     if (weeklyRes.status === "fulfilled" && weeklyRes.value.ok) {
       weekly = await weeklyRes.value.json();
       setWeeklyData(weekly);
+      weeklySucceeded = true;
       if (weekly?.current && w === "current") setWeek(weekly.current.week);
+    } else if (weeklyRes.status === "fulfilled") {
+      const body = await weeklyRes.value.json().catch(() => ({}));
+      errors.push(body.error ?? `Dashboard request failed (${weeklyRes.value.status})`);
+    } else {
+      errors.push(`Dashboard request failed: ${weeklyRes.reason instanceof Error ? weeklyRes.reason.message : String(weeklyRes.reason)}`);
     }
 
     let flow: FlowSnapshot | null = null;
+    let flowSucceeded = false;
     if (flowRes.status === "fulfilled" && flowRes.value.ok) {
       const flowJson: FlowApiResponse = await flowRes.value.json();
       flow = flowJson.data;
       setFlowData(flow);
+      flowSucceeded = true;
       if (flow && !weekly?.current && w === "current") setWeek(flow.week);
+    } else if (flowRes.status === "fulfilled") {
+      const body = await flowRes.value.json().catch(() => ({}));
+      errors.push(body.error ?? `Flow request failed (${flowRes.value.status})`);
+    } else {
+      errors.push(`Flow request failed: ${flowRes.reason instanceof Error ? flowRes.reason.message : String(flowRes.reason)}`);
     }
 
+    if (errors.length > 0) {
+      setError(errors.join(" "));
+    }
     setLoading(false);
 
-    if (!weekly?.current && !flow && w === "current") {
+    if (weeklySucceeded && flowSucceeded && !weekly?.current && !flow && w === "current") {
       triggerBootstrap();
     }
   }

@@ -8,6 +8,7 @@ import type {
   FlowMetrics,
 } from "./types";
 import { computePercentile } from "./math";
+import { isDateWithinRange } from "./week";
 
 const STAGE_ORDER = [
   "New",
@@ -38,7 +39,11 @@ export function computeFlowMetrics(
   weekEnd: string,
 ): FlowMetrics {
   const completedSet = new Set(["Completed"]);
-  const completed = tickets.filter((t) => completedSet.has(t.currentStage));
+  const completed = tickets.filter(
+    (t) =>
+      completedSet.has(t.currentStage) &&
+      isDateWithinRange(t.completedDate, weekStart, weekEnd),
+  );
   const active = tickets.filter((t) => !completedSet.has(t.currentStage));
 
   const cycleTimes = completed

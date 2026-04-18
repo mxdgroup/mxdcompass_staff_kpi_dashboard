@@ -83,24 +83,32 @@ export default function FlowDetailsPage() {
     updateParams({ client: name || null });
   }
 
+  /* eslint-disable react-hooks/exhaustive-deps -- `fetchData` intentionally runs on route-param changes only. */
   useEffect(() => {
     fetchData(weekParam);
   }, [weekParam]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   async function fetchData(w: string) {
     setLoading(true);
     setError("");
+    setData(null);
     const param = w === "current" ? "" : `?week=${w}`;
-    const res = await fetch(`/internal/kpis/api/flow${param}`);
-    if (!res.ok) {
-      setError("Failed to load flow data");
-      setLoading(false);
-      return;
-    }
-    const json: FlowApiResponse = await res.json();
-    setData(json.data);
-    if (json.data && w === "current") {
-      updateParams({ week: json.data.week });
+    try {
+      const res = await fetch(`/internal/kpis/api/flow${param}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? `Failed to load flow data (${res.status})`);
+        setLoading(false);
+        return;
+      }
+      const json: FlowApiResponse = await res.json();
+      setData(json.data);
+      if (json.data && w === "current") {
+        updateParams({ week: json.data.week });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
     setLoading(false);
   }
@@ -174,6 +182,7 @@ export default function FlowDetailsPage() {
           <p className="mt-2 text-gray-500">
             No flow data yet. Run a sync from the Overview page.
           </p>
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
         </div>
       </main>
     );

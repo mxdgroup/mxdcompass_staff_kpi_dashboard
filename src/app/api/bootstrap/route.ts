@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { discoverWrikeConfig } from "@/lib/bootstrap";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
-import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { saveFlowSnapshotWithGuard } from "@/lib/flowStorage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { saveSnapshot, acquireSyncGuard, releaseSyncGuard } from "@/lib/storage";
 import { getCurrentWeek } from "@/lib/week";
@@ -35,10 +35,15 @@ export async function POST(request: Request) {
     const week = getCurrentWeek();
     console.log(`[bootstrap] Step 2: Building weekly snapshot for ${week}...`);
     let weeklyError: string | null = null;
+    let flowSaveError: string | undefined;
     try {
       const snapshot = await buildWeeklySnapshot(week);
-      await saveSnapshot(snapshot);
-      console.log(`[bootstrap] Weekly snapshot saved: ${snapshot.employees.length} employees`);
+      const weeklyResult = await saveSnapshot(snapshot);
+      if (!weeklyResult.saved) {
+        weeklyError = weeklyResult.reason ?? "Weekly snapshot save failed";
+      } else {
+        console.log(`[bootstrap] Weekly snapshot saved: ${snapshot.employees.length} employees`);
+      }
     } catch (err) {
       weeklyError = err instanceof Error ? err.message : String(err);
       console.error("[bootstrap] Weekly snapshot failed:", weeklyError);
@@ -47,8 +52,12 @@ export async function POST(request: Request) {
     // Step 3: Build flow snapshot
     console.log("[bootstrap] Step 3: Building flow snapshot...");
     const flowSnapshot = await buildFlowSnapshot(week);
-    await saveFlowSnapshot(flowSnapshot);
-    console.log(`[bootstrap] Flow snapshot saved: ${flowSnapshot.tickets.length} tickets`);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
+    if (!flowResult.saved) {
+      flowSaveError = flowResult.reason;
+    } else {
+      console.log(`[bootstrap] Flow snapshot saved: ${flowSnapshot.tickets.length} tickets`);
+    }
 
     const duration = Math.round((Date.now() - startTime) / 1000);
 
@@ -60,6 +69,7 @@ export async function POST(request: Request) {
       effortFieldFound: !!overrides.effortCustomFieldId,
       flowTickets: flowSnapshot.tickets.length,
       weeklyError,
+      flowSaveError,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

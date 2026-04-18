@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { clearStatusCache, resolveWorkflowStatuses } from "@/lib/wrike/fetcher";
 import { getTransitionsInRange } from "@/lib/wrike/transitions";
 import { getCurrentWeek, getWeekRange } from "@/lib/week";
-import { setCachedWorkflowStatuses } from "@/lib/storage";
+import { clearCachedWorkflowStatuses } from "@/lib/storage";
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -18,17 +18,7 @@ export async function GET(request: Request) {
   // Clear both in-memory and Redis caches to force fresh resolution
   clearStatusCache();
   try {
-    // Invalidate Redis cache by overwriting with empty (will be replaced by fresh data)
-    await setCachedWorkflowStatuses({
-      returnForReviewId: null,
-      clientReviewId: null,
-      completedIds: [],
-      plannedIds: [],
-      inProgressId: null,
-      inReviewId: null,
-      clientPendingId: null,
-      allStatuses: [],
-    });
+    await clearCachedWorkflowStatuses();
   } catch {
     // Redis cache clear failed, continue anyway
   }

@@ -82,6 +82,12 @@ export function clearStatusCache(): void {
   _cachedStatuses = undefined;
 }
 
+function isValidCachedStatuses(
+  cached: Awaited<ReturnType<typeof getCachedWorkflowStatuses>>,
+): cached is NonNullable<Awaited<ReturnType<typeof getCachedWorkflowStatuses>>> {
+  return !!cached && Array.isArray(cached.allStatuses) && cached.allStatuses.length > 0;
+}
+
 export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
   // Check in-memory cache first
   if (_cachedStatuses && Date.now() - _cachedStatuses.cachedAt < STATUS_CACHE_TTL_MS) {
@@ -91,7 +97,7 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
   // P25: Check Redis cache on cold start before hitting Wrike API
   try {
     const cached = await getCachedWorkflowStatuses();
-    if (cached) {
+    if (isValidCachedStatuses(cached)) {
       const resolved: ResolvedStatuses = {
         returnForReviewId: cached.returnForReviewId ?? undefined,
         clientReviewId: cached.clientReviewId ?? undefined,
@@ -105,6 +111,9 @@ export async function resolveWorkflowStatuses(): Promise<ResolvedStatuses> {
       _cachedStatuses = { data: resolved, cachedAt: Date.now() };
       console.log("[fetcher] Loaded workflow statuses from Redis cache");
       return resolved;
+    }
+    if (cached) {
+      console.warn("[fetcher] Ignoring invalid cached workflow statuses");
     }
   } catch {
     // Redis read failed — fall through to Wrike API
@@ -270,8 +279,25 @@ export async function fetchWeeklyMemberData(
 ): Promise<WeeklyMemberData> {
   const client = getWrikeClient();
 
-  const allTasks: WrikeTask[] = [];
+  const taskMap = new Map<string, WrikeTask>();
   const commentsByTask = new Map<string, WrikeComment[]>();
+
+  const mergeComments = (taskId: string, incoming: WrikeComment[]) => {
+    if (incoming.length === 0) return;
+    const merged = new Map<string, WrikeComment>();
+    for (const comment of commentsByTask.get(taskId) ?? []) {
+      merged.set(comment.id, comment);
+    }
+    for (const comment of incoming) {
+      merged.set(comment.id, comment);
+    }
+    commentsByTask.set(
+      taskId,
+      Array.from(merged.values()).sort((a, b) =>
+        a.createdDate.localeCompare(b.createdDate),
+      ),
+    );
+  };
 
   for (const folderId of folderIds) {
     // ---- Tasks ----
@@ -294,7 +320,12 @@ export async function fetchWeeklyMemberData(
         t.responsibleIds?.includes(contactId) &&
         !isCompletedBeyondCutoff(t),
     );
-    allTasks.push(...memberTasks);
+    for (const task of memberTasks) {
+      const existingTask = taskMap.get(task.id);
+      if (!existingTask || new Date(task.updatedDate).getTime() > new Date(existingTask.updatedDate).getTime()) {
+        taskMap.set(task.id, task);
+      }
+    }
 
     // ---- Comments (folder-level) ----
     // Wrike comments endpoint does NOT support updatedDate filter — fetch all
@@ -306,12 +337,10 @@ export async function fetchWeeklyMemberData(
     const memberTaskIds = new Set(memberTasks.map((t) => t.id));
 
     // Map comments that have a taskId directly
-    let mappedTaskIds = new Set<string>();
+    const mappedTaskIds = new Set<string>();
     for (const comment of folderComments) {
       if (comment.taskId && memberTaskIds.has(comment.taskId)) {
-        const existing = commentsByTask.get(comment.taskId) ?? [];
-        existing.push(comment);
-        commentsByTask.set(comment.taskId, existing);
+        mergeComments(comment.taskId, [comment]);
         mappedTaskIds.add(comment.taskId);
       }
     }
@@ -330,9 +359,7 @@ export async function fetchWeeklyMemberData(
       const taskComments = await client.get<WrikeComment>(
         `/tasks/${taskId}/comments`,
       );
-      if (taskComments.length > 0) {
-        commentsByTask.set(taskId, taskComments);
-      }
+      mergeComments(taskId, taskComments);
     }
   }
 
@@ -364,7 +391,12 @@ export async function fetchWeeklyMemberData(
     }
   }
 
-  return { tasks: allTasks, comments: commentsByTask, timelogs, totalHours };
+  return {
+    tasks: Array.from(taskMap.values()),
+    comments: commentsByTask,
+    timelogs,
+    totalHours,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ interface RoleGroupSectionProps {
   approvalOwnerId?: string;
 }
 
-export function RoleGroupSection({ role, label, employees, approvalOwnerId }: RoleGroupSectionProps) {
+export function RoleGroupSection({ label, employees }: RoleGroupSectionProps) {
   const [open, setOpen] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 

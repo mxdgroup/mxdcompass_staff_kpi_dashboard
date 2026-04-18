@@ -10,6 +10,15 @@ interface TicketFlowTableProps {
   onResyncTask?: (taskId: string) => Promise<void>;
 }
 
+interface SortHeaderProps {
+  label: string;
+  k: SortKey;
+  sortKey: SortKey;
+  sortAsc: boolean;
+  onToggle: (key: SortKey) => void;
+  className?: string;
+}
+
 const STAGES = [
   "New",
   "Planned",
@@ -67,6 +76,24 @@ function getStageDuration(
   stageName: string,
 ): StageDuration | undefined {
   return durations.find((d) => d.stageName === stageName);
+}
+
+function SortHeader({
+  label,
+  k,
+  sortKey,
+  sortAsc,
+  onToggle,
+  className,
+}: SortHeaderProps) {
+  return (
+    <th
+      className={`px-2 py-2 text-left text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-700 ${className ?? ""}`}
+      onClick={() => onToggle(k)}
+    >
+      {label} {sortKey === k ? (sortAsc ? "\u25B2" : "\u25BC") : ""}
+    </th>
+  );
 }
 
 export function TicketFlowTable({
@@ -139,23 +166,6 @@ export function TicketFlowTable({
     );
   }
 
-  const SortHeader = ({
-    label,
-    k,
-    className,
-  }: {
-    label: string;
-    k: SortKey;
-    className?: string;
-  }) => (
-    <th
-      className={`px-2 py-2 text-left text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-700 ${className ?? ""}`}
-      onClick={() => toggleSort(k)}
-    >
-      {label} {sortKey === k ? (sortAsc ? "\u25B2" : "\u25BC") : ""}
-    </th>
-  );
-
   return (
     <div>
       {/* Filter tabs */}
@@ -180,14 +190,35 @@ export function TicketFlowTable({
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200">
-              <SortHeader label="Task" k="title" className="min-w-[180px]" />
-              {showAssignee && <SortHeader label="Assignee" k="assignee" />}
+              <SortHeader
+                label="Task"
+                k="title"
+                sortKey={sortKey}
+                sortAsc={sortAsc}
+                onToggle={toggleSort}
+                className="min-w-[180px]"
+              />
+              {showAssignee && (
+                <SortHeader
+                  label="Assignee"
+                  k="assignee"
+                  sortKey={sortKey}
+                  sortAsc={sortAsc}
+                  onToggle={toggleSort}
+                />
+              )}
               {showClient && (
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">
                   Client
                 </th>
               )}
-              <SortHeader label="Effort" k="effort" />
+              <SortHeader
+                label="Effort"
+                k="effort"
+                sortKey={sortKey}
+                sortAsc={sortAsc}
+                onToggle={toggleSort}
+              />
               {STAGES.map((stage) => {
                 const hasData = stagesWithData.has(stage);
                 return (
@@ -203,7 +234,13 @@ export function TicketFlowTable({
                   </th>
                 );
               })}
-              <SortHeader label="Cycle" k="cycleTime" />
+              <SortHeader
+                label="Cycle"
+                k="cycleTime"
+                sortKey={sortKey}
+                sortAsc={sortAsc}
+                onToggle={toggleSort}
+              />
               {onResyncTask && (
                 <th className="px-2 py-2 text-center text-xs font-medium text-gray-400 w-10" />
               )}

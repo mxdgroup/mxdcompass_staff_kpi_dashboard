@@ -4,7 +4,7 @@
 import { NextResponse } from "next/server";
 import { discoverWrikeConfig } from "@/lib/bootstrap";
 import { buildFlowSnapshot } from "@/lib/flowBuilder";
-import { saveFlowSnapshot } from "@/lib/flowStorage";
+import { saveFlowSnapshotWithGuard } from "@/lib/flowStorage";
 import { buildWeeklySnapshot } from "@/lib/aggregator";
 import { saveSnapshot, acquireSyncGuard, releaseSyncGuard } from "@/lib/storage";
 import { getCurrentWeek } from "@/lib/week";
@@ -33,9 +33,12 @@ export async function POST() {
     let weeklyError: string | null = null;
     try {
       const snapshot = await buildWeeklySnapshot(week);
-      const result = await saveSnapshot(snapshot);
-      if (!result.saved) weeklyError = result.reason ?? "Save failed";
-      else console.log(`[bootstrap/trigger] Weekly snapshot saved: ${snapshot.employees.length} employees`);
+      const weeklyResult = await saveSnapshot(snapshot);
+      if (!weeklyResult.saved) {
+        weeklyError = weeklyResult.reason ?? "Save failed";
+      } else {
+        console.log(`[bootstrap/trigger] Weekly snapshot saved: ${snapshot.employees.length} employees`);
+      }
     } catch (err) {
       weeklyError = err instanceof Error ? err.message : String(err);
       console.error("[bootstrap/trigger] Weekly snapshot failed:", weeklyError);
@@ -44,7 +47,7 @@ export async function POST() {
     // Step 3: Build flow snapshot
     console.log("[bootstrap/trigger] Step 3: Building flow snapshot...");
     const flowSnapshot = await buildFlowSnapshot(week);
-    const flowResult = await saveFlowSnapshot(flowSnapshot);
+    const flowResult = await saveFlowSnapshotWithGuard(flowSnapshot);
     if (flowResult.saved) {
       console.log(`[bootstrap/trigger] Flow snapshot saved: ${flowSnapshot.tickets.length} tickets`);
     }

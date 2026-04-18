@@ -37,6 +37,16 @@ function resolveStatusName(
   return found?.name ?? "Unknown";
 }
 
+function resolveClientNameForTask(
+  task: Pick<WrikeTask, "parentIds">,
+  fallbackClientName?: string | null,
+): string {
+  const directMatch = config.clients.find((client) =>
+    task.parentIds?.includes(client.wrikeFolderId),
+  );
+  return directMatch?.name ?? fallbackClientName ?? "Unknown";
+}
+
 // ---------------------------------------------------------------------------
 // Merge webhook + comment transitions
 // ---------------------------------------------------------------------------
@@ -494,7 +504,7 @@ export async function patchFlowSnapshotForTask(
 
   // Determine client name from existing ticket or folder membership
   const existingTicket = existing.tickets.find((t) => t.taskId === taskId);
-  const clientName = existingTicket?.clientName ?? "Unknown";
+  const clientName = resolveClientNameForTask(task, existingTicket?.clientName);
 
   // Build the updated ticket flow entry
   const updatedTicket = buildTicketFlow(task, transitions, clientName, statuses, now);
