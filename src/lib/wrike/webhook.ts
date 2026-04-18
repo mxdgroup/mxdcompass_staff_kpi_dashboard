@@ -24,40 +24,22 @@ export interface TransitionEntry {
 // ---------- Constants ----------
 
 const TTL_SECONDS = 365 * 24 * 60 * 60;
-const WEBHOOK_SECRET_KEY = "kpi:webhook:secret";
 
-export async function storeWebhookSecret(secret: string): Promise<void> {
-  const r = getSharedRedis();
-  if (!r) {
-    throw new Error("No Redis available, cannot store webhook secret");
+function getConfiguredWebhookSecret(): string | null {
+  const secret = process.env.WRIKE_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error(
+      "[webhook] Missing WRIKE_WEBHOOK_SECRET — secure webhook validation cannot run.",
+    );
   }
-  // P10: Unconditional set — P8 moved storage out of after() into synchronous code,
-  // eliminating the race that originally motivated NX. Allowing overwrites ensures
-  // re-registration handshakes (after suspension recovery or secret rotation) succeed.
-  await r.set(WEBHOOK_SECRET_KEY, secret, { ex: TTL_SECONDS });
-  console.log("[webhook] Handshake secret stored in Redis with TTL");
-}
-
-async function getWebhookSecret(): Promise<string | null> {
-  const r = getSharedRedis();
-  if (r) {
-    const stored = await r.get<string>(WEBHOOK_SECRET_KEY);
-    if (stored) return stored;
-  }
-  const envSecret = process.env.WRIKE_WEBHOOK_SECRET;
-  if (envSecret) {
-    console.warn("[webhook] Redis secret missing, falling back to WRIKE_WEBHOOK_SECRET env var");
-    return envSecret;
-  }
-  return null;
+  return secret ?? null;
 }
 
 // ---------- Signature validation ----------
 
 export async function validateSignature(body: string, signature: string): Promise<boolean> {
-  const secret = await getWebhookSecret();
+  const secret = getConfiguredWebhookSecret();
   if (!secret) {
-    console.error("[webhook] No webhook secret available — check Redis key 'kpi:webhook:secret' and WRIKE_WEBHOOK_SECRET env var. Webhook may need re-registration.");
     return false;
   }
   const expected = crypto
@@ -72,6 +54,17 @@ export async function validateSignature(body: string, signature: string): Promis
   } catch {
     return false;
   }
+}
+
+export function signHookSecret(hookSecret: string): string {
+  const secret = getConfiguredWebhookSecret();
+  if (!secret) {
+    throw new Error("Missing WRIKE_WEBHOOK_SECRET");
+  }
+  return crypto
+    .createHmac("sha256", secret)
+    .update(hookSecret, "utf8")
+    .digest("hex");
 }
 
 // ---------- ISO-week helper ----------

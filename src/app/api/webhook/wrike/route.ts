@@ -1,8 +1,8 @@
 import { after } from "next/server";
 import {
+  signHookSecret,
   validateSignature,
   storeTransition,
-  storeWebhookSecret,
   type WrikeWebhookEvent,
 } from "@/lib/wrike/webhook";
 import { applyDateForStatusChange } from "@/lib/wrike/dateWriter";
@@ -12,28 +12,46 @@ import { syncTask } from "@/lib/syncRunner";
 export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<Response> {
-  // --- HANDSHAKE ---
-  // Wrike sends X-Hook-Secret during registration. Echo it back immediately.
+  const rawBody = await request.text();
   const hookSecret = request.headers.get("x-hook-secret");
+  const signature = request.headers.get("x-hook-signature");
+
+  // --- HANDSHAKE ---
+  // Wrike secure webhooks send a random X-Hook-Secret challenge plus a
+  // signature over the body. Respond with HMAC(secret, challenge) per docs.
   if (hookSecret) {
-    // P8: Store secret synchronously before returning (was in after(), could be lost)
-    try {
-      await storeWebhookSecret(hookSecret);
-    } catch (err) {
-      console.error("[webhook] CRITICAL: Failed to store handshake secret:", err);
-      // Still return the header so Wrike completes handshake; secret will be retried
+    if (!signature) {
+      console.warn("[webhook] Missing signature header on handshake — rejecting request");
+      return new Response(JSON.stringify({ error: "Missing webhook signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
     }
-    return new Response(null, {
-      status: 200,
-      headers: { "X-Hook-Secret": hookSecret },
-    });
+
+    const valid = await validateSignature(rawBody, signature);
+    if (!valid) {
+      console.warn("[webhook] Handshake signature mismatch — rejecting request");
+      return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    try {
+      return new Response(null, {
+        status: 200,
+        headers: { "X-Hook-Secret": signHookSecret(hookSecret) },
+      });
+    } catch (err) {
+      console.error("[webhook] Handshake failed: webhook secret not configured:", err);
+      return new Response(JSON.stringify({ error: "Webhook secret not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   // --- EVENTS ---
-  const rawBody = await request.text();
-
-  // P9: Require signature on all non-handshake requests
-  const signature = request.headers.get("x-hook-signature");
   if (!signature) {
     console.warn("[webhook] Missing signature header — rejecting unsigned request");
     return new Response(JSON.stringify({ error: "Missing webhook signature" }), {

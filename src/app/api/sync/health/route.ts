@@ -7,7 +7,8 @@ import { WEBHOOK_ID_KEY } from "@/lib/wrike/webhookRegistrar";
  * GET /api/sync/health
  *
  * Read-only health check for the sync pipeline. Returns:
- * - Last sync time and webhook health
+ * - Snapshot freshness / overall sync health
+ * - Webhook delivery recency as a separate degraded signal
  * - Task counts by status and client
  * - Cron schedule info
  *
@@ -40,6 +41,16 @@ export async function GET() {
   const webhookHealthy =
     lastWebhookEvent !== null &&
     Date.now() - lastWebhookEvent * 1000 < 48 * 60 * 60 * 1000;
+  const syncHealthy = lastSyncedAt !== null;
+  const degraded = syncHealthy && !webhookHealthy;
+  const issues: string[] = [];
+
+  if (!syncHealthy) {
+    issues.push("No flow snapshot has been synced yet");
+  }
+  if (!webhookHealthy) {
+    issues.push("No TaskStatusChanged webhook deliveries observed in the last 48h");
+  }
 
   const redis = getSharedRedis();
   const registeredWebhookId = redis
@@ -47,7 +58,10 @@ export async function GET() {
     : null;
 
   return NextResponse.json({
-    healthy: lastSyncedAt !== null && webhookHealthy,
+    healthy: syncHealthy,
+    syncHealthy,
+    degraded,
+    issues,
     lastSyncedAt,
     latestWeek,
     lastWebhookEvent: lastWebhookEvent

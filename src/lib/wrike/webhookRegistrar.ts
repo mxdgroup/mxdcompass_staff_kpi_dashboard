@@ -23,6 +23,8 @@ import { getSharedRedis } from "../storage";
 import { getWrikeClient } from "./client";
 
 const WEBHOOK_ID_KEY = "kpi:wrike:webhook_id";
+const WEBHOOK_SECRET_VERSION_KEY = "kpi:wrike:webhook:secret_version";
+const WEBHOOK_SECRET_VERSION = "v1";
 const WEBHOOK_PATH = "/internal/kpis/api/webhook/wrike";
 const TARGET_EVENTS = ["TaskStatusChanged"];
 
@@ -60,6 +62,7 @@ export function getExpectedHookUrl(): string | null {
 export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResult> {
   const client = getWrikeClient();
   const redis = getSharedRedis();
+  const signingSecret = process.env.WRIKE_WEBHOOK_SECRET;
 
   const expectedUrl = getExpectedHookUrl();
   if (!expectedUrl) {
@@ -68,6 +71,14 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
       webhookId: null,
       hookUrl: null,
       reason: "No hook URL configured — set WRIKE_WEBHOOK_HOOK_URL or VERCEL_PROJECT_PRODUCTION_URL",
+    };
+  }
+  if (!signingSecret) {
+    return {
+      action: "failed",
+      webhookId: null,
+      hookUrl: expectedUrl,
+      reason: "No WRIKE_WEBHOOK_SECRET configured for secure webhook registration",
     };
   }
 
@@ -88,6 +99,11 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
 
   const match = existing.find((w) => w.hookUrl === expectedUrl);
   const deploymentHost = safeHost(expectedUrl);
+  const secretVersion = redis
+    ? await redis.get<string>(WEBHOOK_SECRET_VERSION_KEY)
+    : WEBHOOK_SECRET_VERSION;
+  const needsSecureRotation =
+    !!redis && !!match && secretVersion !== WEBHOOK_SECRET_VERSION;
 
   // Clean up sibling webhooks whose hookUrl points at this deployment host
   // but a wrong path. Runs on every reconciliation, so stale entries from
@@ -113,7 +129,7 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
     return cleaned;
   }
 
-  if (match) {
+  if (match && !needsSecureRotation) {
     const action: WebhookAction =
       match.status === "Active"
         ? "noop"
@@ -134,7 +150,10 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
       }
     }
 
-    if (redis) await redis.set(WEBHOOK_ID_KEY, match.id);
+    if (redis) {
+      await redis.set(WEBHOOK_ID_KEY, match.id);
+      await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+    }
     const cleanedUp = await cleanupStaleSiblings(match.id);
     return {
       action,
@@ -142,6 +161,20 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
       hookUrl: expectedUrl,
       cleanedUp: cleanedUp.length > 0 ? cleanedUp : undefined,
     };
+  }
+
+  if (match && needsSecureRotation) {
+    try {
+      await client.delete(`/webhooks/${match.id}`);
+      existing = existing.filter((w) => w.id !== match.id);
+    } catch (err) {
+      return {
+        action: "failed",
+        webhookId: match.id,
+        hookUrl: expectedUrl,
+        reason: `Delete legacy unsigned webhook failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   // No webhook pointing at the right URL — register a fresh one.
@@ -154,6 +187,7 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
       "/webhooks",
       {
         hookUrl: expectedUrl,
+        secret: signingSecret,
         events: JSON.stringify(TARGET_EVENTS),
       },
     );
@@ -176,7 +210,10 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
     };
   }
 
-  if (redis) await redis.set(WEBHOOK_ID_KEY, created.id);
+  if (redis) {
+    await redis.set(WEBHOOK_ID_KEY, created.id);
+    await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+  }
   const cleanedUp = await cleanupStaleSiblings(created.id);
 
   return {
