@@ -53,9 +53,18 @@ export async function GET() {
   }
 
   const redis = getSharedRedis();
-  const registeredWebhookId = redis
-    ? await redis.get<string>(WEBHOOK_ID_KEY)
-    : null;
+  let registeredWebhookId: string | null = null;
+  if (redis) {
+    try {
+      registeredWebhookId = await redis.get<string>(WEBHOOK_ID_KEY);
+    } catch (err) {
+      console.warn(
+        `[sync/health] Failed to read registered webhook id from Redis: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
 
   return NextResponse.json({
     healthy: syncHealthy,

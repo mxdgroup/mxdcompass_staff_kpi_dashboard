@@ -171,7 +171,17 @@ export async function storeTransition(
   // persist or neither does. Prevents orphaned dedup keys on partial failure.
   const dedupSetKey = `${key}:dedup`;
 
-  const ttl = await r.ttl(key);
+  let ttl: number;
+  try {
+    ttl = await r.ttl(key);
+  } catch (err) {
+    console.warn(
+      `[webhook] Redis TTL lookup failed; transition not stored: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return;
+  }
 
   const pipe = r.pipeline();
   pipe.sadd(dedupSetKey, dedupKey);                          // index 0: 1=new, 0=dup
@@ -184,7 +194,17 @@ export async function storeTransition(
 
   pipe.set("kpi:webhook:last_event", Math.floor(Date.now() / 1000));
 
-  const results = await pipe.exec();
+  let results: unknown[] | null;
+  try {
+    results = await pipe.exec();
+  } catch (err) {
+    console.warn(
+      `[webhook] Redis pipeline failed; transition not stored: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return;
+  }
   const wasNew = results?.[0] === 1;
 
   if (wasNew) {

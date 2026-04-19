@@ -99,9 +99,20 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
 
   const match = existing.find((w) => w.hookUrl === expectedUrl);
   const deploymentHost = safeHost(expectedUrl);
-  const secretVersion = redis
-    ? await redis.get<string>(WEBHOOK_SECRET_VERSION_KEY)
-    : WEBHOOK_SECRET_VERSION;
+  let secretVersion = WEBHOOK_SECRET_VERSION;
+  if (redis) {
+    try {
+      secretVersion =
+        (await redis.get<string>(WEBHOOK_SECRET_VERSION_KEY)) ??
+        WEBHOOK_SECRET_VERSION;
+    } catch (err) {
+      console.warn(
+        `[webhookRegistrar] Failed to read Redis secret version: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
   const needsSecureRotation =
     !!redis && !!match && secretVersion !== WEBHOOK_SECRET_VERSION;
 
@@ -151,8 +162,16 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
     }
 
     if (redis) {
-      await redis.set(WEBHOOK_ID_KEY, match.id);
-      await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+      try {
+        await redis.set(WEBHOOK_ID_KEY, match.id);
+        await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+      } catch (err) {
+        console.warn(
+          `[webhookRegistrar] Failed to persist reconciled webhook id to Redis: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
     const cleanedUp = await cleanupStaleSiblings(match.id);
     return {
@@ -211,8 +230,16 @@ export async function ensureWebhookRegistered(): Promise<WebhookRegistrationResu
   }
 
   if (redis) {
-    await redis.set(WEBHOOK_ID_KEY, created.id);
-    await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+    try {
+      await redis.set(WEBHOOK_ID_KEY, created.id);
+      await redis.set(WEBHOOK_SECRET_VERSION_KEY, WEBHOOK_SECRET_VERSION);
+    } catch (err) {
+      console.warn(
+        `[webhookRegistrar] Failed to persist new webhook id to Redis: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   const cleanedUp = await cleanupStaleSiblings(created.id);
 

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   getSharedRedis,
@@ -7,7 +8,9 @@ import {
 } from "./storage";
 import type { FlowSnapshot } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), ".data");
+const DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), "mxdcompass-staff-kpi-dashboard")
+  : path.join(process.cwd(), ".data");
 const FLOW_PREFIX = "kpi:flow:";
 const FLOW_LATEST_KEY = "kpi:flow:latest";
 const TTL_SECONDS = 365 * 24 * 60 * 60;
@@ -49,12 +52,20 @@ export async function saveFlowSnapshot(
   // P6: Reuse shared Redis instance from storage.ts
   const redis = getSharedRedis();
   if (redis) {
-    // P5: Atomic persistence via pipeline
-    const pipe = redis.pipeline();
-    pipe.set(key, json, { ex: TTL_SECONDS });
-    pipe.set(FLOW_LATEST_KEY, snapshot.week);
-    await pipe.exec();
-    return { saved: true };
+    try {
+      // P5: Atomic persistence via pipeline
+      const pipe = redis.pipeline();
+      pipe.set(key, json, { ex: TTL_SECONDS });
+      pipe.set(FLOW_LATEST_KEY, snapshot.week);
+      await pipe.exec();
+      return { saved: true };
+    } catch (err) {
+      console.warn(
+        `[flowStorage] Redis pipeline failed; falling back to local storage: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   // Local file fallback
@@ -99,9 +110,16 @@ export async function getFlowSnapshot(
 
   const redis = getSharedRedis();
   if (redis) {
-    const data = await redis.get<FlowSnapshot>(key);
-    if (!data) return null;
-    return data;
+    try {
+      const data = await redis.get<FlowSnapshot>(key);
+      if (data) return data;
+    } catch (err) {
+      console.warn(
+        `[flowStorage] Redis read failed for ${key}; falling back to local storage: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   // Local file fallback
@@ -113,7 +131,16 @@ export async function getFlowSnapshot(
 export async function getFlowLatestWeek(): Promise<string | null> {
   const redis = getSharedRedis();
   if (redis) {
-    return redis.get<string>(FLOW_LATEST_KEY);
+    try {
+      const latest = await redis.get<string>(FLOW_LATEST_KEY);
+      if (latest) return latest;
+    } catch (err) {
+      console.warn(
+        `[flowStorage] Redis read failed for ${FLOW_LATEST_KEY}; falling back to local storage: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   const fp = localPath(FLOW_LATEST_KEY);

@@ -1,17 +1,8 @@
-import { Redis } from "@upstash/redis";
 import { redisKeyForWeek, type TransitionEntry } from "./webhook";
-import { isRedisAvailable } from "../storage";
+import { getSharedRedis } from "../storage";
 
 /** Synthetic transitions injected by POST /api/sync/baseline use this author ID. */
 export const BASELINE_AUTHOR_ID = "baseline-sync";
-
-const hasRedis = isRedisAvailable();
-let _redis: Redis | null = null;
-function getRedis(): Redis | null {
-  if (!hasRedis) return null;
-  if (!_redis) _redis = Redis.fromEnv();
-  return _redis;
-}
 
 // ---------- Helpers ----------
 
@@ -58,16 +49,26 @@ export async function getTransitionsInRange(
   startTimestamp: number,
   endTimestamp: number,
 ): Promise<TransitionEntry[]> {
-  const redis = getRedis();
+  const redis = getSharedRedis();
   if (!redis) return []; // No webhook data without Redis — comment parser fills gaps
 
   const keys = weekKeysBetween(startTimestamp, endTimestamp);
   const results: TransitionEntry[] = [];
 
   for (const key of keys) {
-    const members = (await redis.zrange(key, startTimestamp, endTimestamp, {
-      byScore: true,
-    })) as string[];
+    let members: string[];
+    try {
+      members = (await redis.zrange(key, startTimestamp, endTimestamp, {
+        byScore: true,
+      })) as string[];
+    } catch (err) {
+      console.warn(
+        `[transitions] Redis read failed for ${key}; returning partial results: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
     for (const raw of members) {
       const entry = parseMember(typeof raw === "string" ? raw : JSON.stringify(raw));
       results.push({

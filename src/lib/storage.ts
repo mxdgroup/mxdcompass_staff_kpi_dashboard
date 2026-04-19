@@ -1,6 +1,7 @@
 import { Redis } from "@upstash/redis";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { WeeklySnapshot } from "./types";
 import { getPriorWeeks } from "./week";
@@ -9,21 +10,44 @@ import { getPriorWeeks } from "./week";
 // Dual-mode storage: Redis when available, local JSON files when not
 // ---------------------------------------------------------------------------
 
-const DATA_DIR = path.join(process.cwd(), ".data");
+const DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), "mxdcompass-staff-kpi-dashboard")
+  : path.join(process.cwd(), ".data");
 
-const hasRedis =
+const REDIS_BACKOFF_MS = 60_000;
+const redisConfigured =
   !!process.env.UPSTASH_REDIS_REST_URL &&
   !!process.env.UPSTASH_REDIS_REST_TOKEN;
 
 let _redis: Redis | null = null;
+let redisBackoffUntil = 0;
+let lastRedisErrorLog = "";
+
+function disableRedisTemporarily(operation: string, err: unknown): void {
+  redisBackoffUntil = Date.now() + REDIS_BACKOFF_MS;
+  const detail = err instanceof Error ? err.message : String(err);
+  const logLine =
+    `[storage] Redis operation failed (${operation}); falling back to local storage for ` +
+    `${Math.round(REDIS_BACKOFF_MS / 1000)}s: ${detail}`;
+
+  if (lastRedisErrorLog !== logLine) {
+    console.warn(logLine);
+    lastRedisErrorLog = logLine;
+  }
+}
+
+function canUseRedis(): boolean {
+  return redisConfigured && Date.now() >= redisBackoffUntil;
+}
+
 function getRedis(): Redis | null {
-  if (!hasRedis) return null;
+  if (!canUseRedis()) return null;
   if (!_redis) _redis = Redis.fromEnv();
   return _redis;
 }
 
 // Re-export for modules that need direct Redis access
-export const redis = hasRedis ? Redis.fromEnv() : (null as unknown as Redis);
+export const redis = getRedis() ?? (null as unknown as Redis);
 
 /** Lazy Redis getter for modules that need it after cold start. */
 export function getSharedRedis(): Redis | null {
@@ -50,7 +74,11 @@ async function localGet<T>(key: string): Promise<T | null> {
   const fp = localPath(key);
   if (!fs.existsSync(fp)) return null;
   const raw = fs.readFileSync(fp, "utf-8");
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return raw as T;
+  }
 }
 
 async function localSet(key: string, value: string): Promise<void> {
@@ -70,10 +98,13 @@ async function localDel(key: string): Promise<void> {
 async function kvGet<T>(key: string): Promise<T | null> {
   const r = getRedis();
   if (r) {
-    // Upstash auto-parses JSON, so r.get() returns the parsed value directly.
-    const data = await r.get<T>(key);
-    if (data === null || data === undefined) return null;
-    return data;
+    try {
+      // Upstash auto-parses JSON, so r.get() returns the parsed value directly.
+      const data = await r.get<T>(key);
+      if (data !== null && data !== undefined) return data;
+    } catch (err) {
+      disableRedisTemporarily(`GET ${key}`, err);
+    }
   }
   return localGet<T>(key);
 }
@@ -81,12 +112,16 @@ async function kvGet<T>(key: string): Promise<T | null> {
 async function kvSet(key: string, value: string, _ttl?: number): Promise<void> {
   const r = getRedis();
   if (r) {
-    if (_ttl) {
-      await r.set(key, value, { ex: _ttl });
-    } else {
-      await r.set(key, value);
+    try {
+      if (_ttl) {
+        await r.set(key, value, { ex: _ttl });
+      } else {
+        await r.set(key, value);
+      }
+      return;
+    } catch (err) {
+      disableRedisTemporarily(`SET ${key}`, err);
     }
-    return;
   }
   await localSet(key, value);
 }
@@ -94,8 +129,12 @@ async function kvSet(key: string, value: string, _ttl?: number): Promise<void> {
 async function kvDel(key: string): Promise<void> {
   const r = getRedis();
   if (r) {
-    await r.del(key);
-    return;
+    try {
+      await r.del(key);
+      return;
+    } catch (err) {
+      disableRedisTemporarily(`DEL ${key}`, err);
+    }
   }
   await localDel(key);
 }
@@ -105,7 +144,7 @@ async function kvDel(key: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function isRedisAvailable(): boolean {
-  return hasRedis;
+  return canUseRedis();
 }
 
 // ---------------------------------------------------------------------------
@@ -116,27 +155,31 @@ async function acquireGuard(
   key: string,
   ttlSeconds: number,
 ): Promise<SyncGuardResult> {
-  if (!hasRedis) {
-    if (process.env.VERCEL) {
-      console.error(`[storage] Redis unavailable in production — guard failed closed (${key})`);
-      return { acquired: false, owner: "" };
-    }
+  const r = getRedis();
+  if (!r) {
+    console.warn(`[storage] Guard downgraded to local mode (${key})`);
     return { acquired: true, owner: "local" };
   }
 
   const owner = crypto.randomUUID();
-  const r = getRedis()!;
-  const result = await r.set(key, owner, { ex: ttlSeconds, nx: true });
-  return { acquired: result === "OK", owner };
+  try {
+    const result = await r.set(key, owner, { ex: ttlSeconds, nx: true });
+    return { acquired: result === "OK", owner };
+  } catch (err) {
+    disableRedisTemporarily(`SETNX ${key}`, err);
+    return { acquired: true, owner: "local" };
+  }
 }
 
 async function releaseGuard(key: string, owner: string): Promise<void> {
-  if (!hasRedis || owner === "local") return;
-  const r = getRedis()!;
+  if (owner === "local") return;
+  const r = getRedis();
+  if (!r) return;
   const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
   try {
     await r.eval(script, [key], [owner]);
   } catch (err) {
+    disableRedisTemporarily(`EVAL release ${key}`, err);
     console.warn(`[storage] Lua eval failed for ${key}; letting lock expire via TTL:`, err);
   }
 }
@@ -165,11 +208,15 @@ export async function saveSnapshot(
   // P5: Atomic persistence via pipeline when Redis available
   const r = getRedis();
   if (r) {
-    const pipe = r.pipeline();
-    pipe.set(key, json, { ex: TTL_SECONDS });
-    pipe.set(LATEST_KEY, snapshot.week);
-    await pipe.exec();
-    return { saved: true };
+    try {
+      const pipe = r.pipeline();
+      pipe.set(key, json, { ex: TTL_SECONDS });
+      pipe.set(LATEST_KEY, snapshot.week);
+      await pipe.exec();
+      return { saved: true };
+    } catch (err) {
+      disableRedisTemporarily(`PIPELINE saveSnapshot ${snapshot.week}`, err);
+    }
   }
 
   // Local file fallback (non-atomic, acceptable for dev)

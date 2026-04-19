@@ -2,12 +2,15 @@
 // Writes results to .data/config-overrides.json for runtime merging
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { getWrikeClient } from "./wrike/client";
 import type { WrikeContact } from "./wrike/types";
 import { config } from "./config";
 
-const DATA_DIR = path.join(process.cwd(), ".data");
+const DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), "mxdcompass-staff-kpi-dashboard")
+  : path.join(process.cwd(), ".data");
 const OVERRIDES_FILE = path.join(DATA_DIR, "config-overrides.json");
 const REDIS_OVERRIDES_KEY = "kpi:config-overrides";
 

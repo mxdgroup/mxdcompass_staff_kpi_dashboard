@@ -143,34 +143,56 @@ export async function POST(request: Request) {
       const dedupSetKey = `${key}:dedup`;
       const TTL_SECONDS = 365 * 24 * 60 * 60;
 
-      const ttl = await redis.ttl(key);
+      let ttl = -2;
+      let canSeedBaseline = true;
+      try {
+        ttl = await redis.ttl(key);
+      } catch (err) {
+        canSeedBaseline = false;
+        console.warn(
+          `[sync/baseline] Redis TTL lookup failed; skipping baseline seeding: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       const needsTtl = ttl === -1 || ttl === -2;
 
-      for (const seed of toSeed) {
-        // Stable dedup key: task + status, no timestamp. Retries within the same
-        // week produce the same member value, so ZADD NX is a true no-op.
-        const dedupKey = `baseline:${seed.taskId}:${seed.customStatusId}`;
+      if (canSeedBaseline) {
+        for (const seed of toSeed) {
+          // Stable dedup key: task + status, no timestamp. Retries within the same
+          // week produce the same member value, so ZADD NX is a true no-op.
+          const dedupKey = `baseline:${seed.taskId}:${seed.customStatusId}`;
 
-        const entry: TransitionEntry = {
-          taskId: seed.taskId,
-          fromStatusId: "",
-          toStatusId: seed.customStatusId,
-          timestamp: nowIso,
-          eventAuthorId: BASELINE_AUTHOR_ID,
-        };
+          const entry: TransitionEntry = {
+            taskId: seed.taskId,
+            fromStatusId: "",
+            toStatusId: seed.customStatusId,
+            timestamp: nowIso,
+            eventAuthorId: BASELINE_AUTHOR_ID,
+          };
 
-        const memberValue = JSON.stringify({ ...entry, _dedup: dedupKey });
+          const memberValue = JSON.stringify({ ...entry, _dedup: dedupKey });
 
-        const pipe = redis.pipeline();
-        pipe.sadd(dedupSetKey, dedupKey);
-        pipe.zadd(key, { nx: true }, { score, member: memberValue });
+          const pipe = redis.pipeline();
+          pipe.sadd(dedupSetKey, dedupKey);
+          pipe.zadd(key, { nx: true }, { score, member: memberValue });
 
-        if (needsTtl) {
-          pipe.expire(key, TTL_SECONDS);
-          pipe.expire(dedupSetKey, TTL_SECONDS);
+          if (needsTtl) {
+            pipe.expire(key, TTL_SECONDS);
+            pipe.expire(dedupSetKey, TTL_SECONDS);
+          }
+
+          try {
+            await pipe.exec();
+          } catch (err) {
+            console.warn(
+              `[sync/baseline] Redis pipeline failed; stopping baseline seeding: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+            break;
+          }
         }
-
-        await pipe.exec();
       }
     }
 
