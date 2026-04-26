@@ -7,7 +7,6 @@ const TABS = [
   { label: "Overview", href: "/" },
   { label: "Flow Details", href: "/flow" },
   { label: "Yesterday", href: "/yesterday" },
-  { label: "PPC Analyser", href: "/ppc" },
 ];
 
 export function NavTabs() {
@@ -16,10 +15,7 @@ export function NavTabs() {
   return (
     <nav className="flex gap-1 mb-8">
       {TABS.map((tab) => {
-        const active =
-          tab.href === "/"
-            ? pathname === tab.href
-            : pathname.startsWith(tab.href);
+        const active = pathname === tab.href;
         const href = tab.href;
         return (
           <Link
